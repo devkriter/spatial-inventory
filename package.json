@@ -1,0 +1,32 @@
+{
+  "name": "inventory-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Spatial inventory manager for 3D printing / electronics parts",
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node --disable-warning=ExperimentalWarning --watch server/index.js",
+    "dev:web": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "serve": "npm run build && npm start"
+  },
+  "dependencies": {
+    "@mmote/niimbluelib": "0.0.1-alpha.41",
+    "express": "^4.19.2",
+    "qrcode": "1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/qrcode": "1.5.6",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^9.0.1",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.6"
+  }
+}

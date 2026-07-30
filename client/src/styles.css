@@ -1,0 +1,1592 @@
+:root {
+  --bg: #14161a;
+  --panel: #1b1e24;
+  --panel-2: #21252c;
+  --line: #2c3039;
+  --line-soft: #242830;
+  --text: #dbe0e8;
+  --muted: #8b94a3;
+  --accent: #5aa9e6;
+  --accent-dim: #33628a;
+  --frame: #e8912a;
+  --danger: #e0685c;
+  --ok: #6fc48b;
+
+  --radius: 4px;
+  --font: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /*
+   * Interface size. Every dimension in the chrome — toolbar, panels, tree,
+   * menus, dialogs — is written against this, so one number moves all of them
+   * together. Set from Settings; 1 is the design size.
+   *
+   * The map is deliberately excluded. Blocks are sized by the layout and by the
+   * map's own zoom, and making a bigger typeface also redraw the drawers would
+   * confuse two unrelated things. Anything under `.block`, `.stage-*`,
+   * `.draft`, `.carry-*` or the map controls stays out of it.
+   */
+  --ui: 1;
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: calc(13px * var(--ui));
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  /* iOS rubber-banding would drag the whole fixed shell up off the screen. */
+  overscroll-behavior: none;
+  /* A long press on a block must never raise the copy/lookup callout — it is
+     a drag or a context menu here, not a text selection. */
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* ------------------------------------------------------------------ shell */
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'top    top    top'
+    'tree   view   side'
+    'status status status';
+  height: 100%;
+  /* Mobile Safari's `100%` is the tall viewport, so the bottom of the app
+     hides behind the address bar until you scroll. `dvh` tracks the bar as it
+     shows and hides; the `100%` above stays as the fallback. */
+  height: 100dvh;
+}
+
+/* The toolbar, plus the search row that only a phone needs under it. */
+.topwrap {
+  grid-area: top;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: calc(10px * var(--ui));
+  padding: calc(8px * var(--ui)) calc(10px * var(--ui));
+  min-height: calc(46px * var(--ui));
+}
+
+.statusbar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: calc(11px * var(--ui));
+  font-family: var(--mono);
+}
+
+.statusbar .spacer { flex: 1; }
+
+.viewport {
+  grid-area: view;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 120% at 30% 0%, #1c1f26 0%, #101216 100%);
+  /* Dragging across blocks must never start a text selection — a stray
+     selection swallows the next click and the app feels frozen. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.viewport img,
+.viewport .block { -webkit-user-drag: none; }
+
+.sidebar {
+  grid-area: side;
+  width: calc(340px * var(--ui));
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.side-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+
+.side-foot {
+  flex: none;
+  margin: 0;
+  padding: calc(9px * var(--ui)) calc(12px * var(--ui));
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: calc(11px * var(--ui));
+  line-height: 1.5;
+}
+
+/* The tree of everything, down the left — its own panel, its own scroll. */
+.tree-sidebar {
+  grid-area: tree;
+  width: calc(280px * var(--ui));
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tree-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 10px 16px;
+  flex: 1;
+}
+
+.side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.side-head .title {
+  flex: 1;
+  font-size: calc(11px * var(--ui));
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+}
+
+.btn.ghost.on { color: var(--accent); background: rgba(90, 169, 230, .12); }
+
+/* ------------------------------------------------------------- breadcrumbs */
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.crumbs::-webkit-scrollbar { display: none; }
+
+.crumb {
+  background: none;
+  border: 0;
+  padding: calc(4px * var(--ui)) calc(7px * var(--ui));
+  border-radius: var(--radius);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.crumb:hover { background: var(--panel-2); color: var(--text); }
+.crumb.current { color: var(--text); font-weight: 600; }
+.crumb-sep { color: #4a515e; }
+
+/* ----------------------------------------------------------------- controls */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px * var(--ui));
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: calc(5px * var(--ui)) calc(10px * var(--ui));
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover { border-color: #3c424e; background: #272c34; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: var(--accent-dim); border-color: #3f7cae; color: #eaf4fd; }
+.btn.primary:hover { background: #3d76a6; }
+.btn.danger { color: var(--danger); }
+.btn.danger:hover { border-color: var(--danger); }
+.btn.ghost { background: none; border-color: transparent; }
+.btn.ghost:hover { background: var(--panel-2); }
+.btn.back { font-weight: 600; }
+.btn.back:not(:disabled) { border-color: #3c424e; }
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segmented button {
+  background: var(--panel-2);
+  border: 0;
+  border-right: 1px solid var(--line);
+  padding: calc(5px * var(--ui)) calc(9px * var(--ui));
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.segmented button:last-child { border-right: 0; }
+.segmented button:hover { color: var(--text); }
+.segmented button.on { background: var(--accent-dim); color: #eaf4fd; }
+
+.search {
+  position: relative;
+  flex: 0 1 calc(260px * var(--ui));
+}
+
+.search input {
+  width: 100%;
+  background: #12151a;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: calc(6px * var(--ui)) calc(26px * var(--ui)) calc(6px * var(--ui)) calc(9px * var(--ui));
+  outline: none;
+}
+
+.search input:focus { border-color: var(--accent-dim); }
+
+.search .clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 5px;
+}
+
+/* ------------------------------------------------------------------ blocks */
+
+.block {
+  position: absolute;
+  overflow: hidden;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, .55);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, .22),
+    inset -1px -1px 0 rgba(0, 0, 0, .30),
+    0 1px 3px rgba(0, 0, 0, .45);
+  cursor: pointer;
+  transition: filter .1s ease, box-shadow .1s ease;
+  contain: layout paint;
+}
+
+/* No z-index here. Nested blocks are later *siblings*, not descendants, so
+   lifting a parent on hover would paint it straight over its own contents.
+   Stacking is set inline from the depth instead, deepest on top. */
+.block:hover { filter: brightness(1.12); }
+
+.block.dimmed { filter: saturate(.25) brightness(.55); }
+
+/* The stand-in for parts that did not fit at a legible size. */
+.block.more { border-style: dashed; }
+.block.more .block-label .name { font-weight: 500; opacity: .8; }
+
+/* List form: one line per part, for when tiles would not all fit. */
+.block.row {
+  border-top-color: rgba(0, 0, 0, .3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14);
+}
+
+.block-row {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px;
+  pointer-events: none;
+  color: #2a1f10;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.block-row .rname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.block-row .rqty { font-family: var(--mono); opacity: .7; flex: none; }
+
+.block.match {
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, .3),
+    inset -1px -1px 0 rgba(0, 0, 0, .3),
+    0 0 0 2px var(--accent),
+    0 0 14px rgba(90, 169, 230, .55);
+}
+
+.block.onpath { box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, .22),
+    inset -1px -1px 0 rgba(0, 0, 0, .30),
+    0 0 0 1px rgba(90, 169, 230, .45); }
+
+.block.selected {
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, .3),
+    0 0 0 2px #fff,
+    0 0 12px rgba(255, 255, 255, .3);
+}
+
+.block-label {
+  position: absolute;
+  inset: 0;
+  padding: 3px 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  pointer-events: none;
+  line-height: 1.15;
+  color: #2a1f10;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .22);
+}
+
+.block-label .name {
+  font-weight: 600;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.block-label .meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  opacity: .75;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.block-label.tiny .name { font-size: 12px; -webkit-line-clamp: 2; }
+.block-label.center { align-items: center; justify-content: center; text-align: center; }
+
+/* The header strip a container gets when it is showing its children. */
+.block-head {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  background: rgba(0, 0, 0, .22);
+  border-bottom: 1px solid rgba(0, 0, 0, .3);
+  color: #2a1f10;
+  font-weight: 600;
+  font-size: 13.5px;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .2);
+}
+
+.block-head .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.block-head .addr { font-family: var(--mono); font-weight: 500; opacity: .72; font-size: 11px; }
+
+.block-body { position: absolute; inset: 0; }
+
+/* What sits under the title bar when there is nothing inside. */
+.block-empty {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: rgba(42, 31, 16, .5);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ------------------------------------------------------- drawing surface */
+
+/* The pan/zoom layer. Everything laid out in stage pixels goes inside it, and
+   nothing else does — that is what keeps a zoom off the toolbar and panels.
+   `inset: 0` rather than a size, because it only ever holds absolute children. */
+/* On touch the corner grip is replaced by the handles on the selection, and a
+   grip you cannot drag is worse than no grip. */
+.viewport.touch .grip-corner { display: none; }
+
+/* The margin around a nested level reads as "outside" it — click to go back. */
+.viewport.nested { cursor: zoom-out; }
+.stage-surface { position: absolute; }
+.viewport.editable .stage-surface { cursor: crosshair; }
+.viewport.editable .block { cursor: pointer; }
+
+/* Only the title bar drags. The body of a block is for clicking, so you can
+   never shove a drawer sideways while trying to look inside it. */
+.viewport.editable .block.movable > .block-head {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.viewport.editable .block.movable > .block-head:active { cursor: grabbing; }
+.viewport.editable .block.movable:hover > .block-head { background: rgba(0, 0, 0, .34); }
+
+/* The resize corner. Visible, and exactly the size of its hit area. */
+.grip-corner {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(
+      135deg,
+      transparent 0 52%,
+      rgba(255, 255, 255, .34) 52% 60%,
+      transparent 60% 68%,
+      rgba(255, 255, 255, .34) 68% 76%,
+      transparent 76%
+    ),
+    linear-gradient(315deg, rgba(0, 0, 0, .22) 0 40%, transparent 40%);
+  border-bottom-right-radius: 2px;
+}
+
+.grip-corner:hover { background-color: rgba(90, 169, 230, .35); }
+
+.block-head .grip {
+  letter-spacing: -1px;
+  opacity: .45;
+  font-size: 12px;
+}
+
+/* The unit grid you draw onto. Solid for grid containers, a whisper for free. */
+.stage-grid {
+  position: absolute;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, .10) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, .10) 1px, transparent 1px);
+}
+
+.stage-grid.faint {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, .04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, .04) 1px, transparent 1px);
+}
+
+/* The rectangle being dragged out, or the one waiting to be named. */
+.draft {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: rgba(90, 169, 230, .22);
+  border-radius: 2px;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  z-index: 20;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #eaf4fd;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .7);
+}
+
+.draft.invalid {
+  border-color: var(--danger);
+  background: rgba(224, 104, 92, .22);
+}
+
+/* Hovering a part over another container: it will be moved in there. */
+.draft.into {
+  border-color: var(--ok);
+  border-style: dashed;
+  background: rgba(111, 196, 139, .2);
+}
+
+/* Carrying a part from one container to another. */
+.carry-ghost {
+  position: absolute;
+  z-index: 40;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .6);
+}
+
+.carry-ghost b { color: var(--ok); font-weight: 600; }
+
+.carry-target {
+  position: absolute;
+  z-index: 39;
+  pointer-events: none;
+  border: 2px solid var(--ok);
+  border-radius: 2px;
+  background: rgba(111, 196, 139, .18);
+}
+
+/* ------------------------------------------------------- touch handles */
+
+/* Move and resize live on the selection as separate, finger-sized targets,
+   outside the transform so they never shrink with the map. Editing is only
+   ever reachable through them, which is what lets a plain drag pan instead. */
+.grab-move,
+.grab-size {
+  position: absolute;
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #08131c;
+  border: 2px solid #0d1117;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .55);
+  touch-action: none;
+  cursor: grab;
+  /* Centred on the point they are positioned at, so a corner handle straddles
+     the corner and you can see the corner underneath it. */
+  transform: translate(-50%, -50%);
+}
+
+.grab-move {
+  min-width: 46px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 15px;
+  font-size: 15px;
+  letter-spacing: -1px;
+}
+
+.grab-size {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(315deg, transparent 0 34%, #08131c 34% 42%, transparent 42% 52%, #08131c 52% 60%, transparent 60%),
+    var(--accent);
+}
+
+.grab-move:active,
+.grab-size:active { background-color: #8ecbf5; }
+
+/* --------------------------------------------------------- map controls */
+
+.map-tools {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 46;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.map-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 19px;
+  border: 1px solid var(--line);
+  background: rgba(27, 30, 36, .92);
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .5);
+  backdrop-filter: blur(6px);
+}
+
+.map-tool:disabled { opacity: .38; cursor: default; }
+.map-tool:active:not(:disabled) { background: var(--panel-2); }
+.map-tool.add { background: var(--accent-dim); border-color: #3f7cae; color: #eaf4fd; }
+
+/* The way back from a zoom, showing how far in you are. Not a control for the
+   interface size — that is a setting, and lives under the cog. */
+.map-tool.readout { gap: 7px; }
+.mt-zoom { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+.draw-prompt {
+  position: absolute;
+  z-index: 30;
+  width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--accent-dim);
+  border-radius: 6px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .6);
+  padding: 10px;
+  cursor: default;
+}
+
+.draw-prompt .dp-head {
+  color: var(--muted);
+  font-size: calc(11px * var(--ui));
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.draw-prompt .dp-head strong { color: var(--text); font-family: var(--mono); }
+
+.draw-prompt input,
+.draw-prompt select {
+  width: 100%;
+  background: #12151a;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  outline: none;
+  margin-bottom: 6px;
+}
+
+.draw-prompt input:focus, .draw-prompt select:focus { border-color: var(--accent); }
+.draw-prompt .dp-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.draw-prompt .dp-what { display: flex; width: 100%; margin-bottom: 6px; }
+.draw-prompt .dp-what button { flex: 1; }
+
+.item .where {
+  background: none;
+  border: 0;
+  font-family: var(--mono);
+  font-size: calc(10px * var(--ui));
+  color: var(--muted);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.item .where:hover { background: var(--panel); color: var(--text); }
+
+.stage-frame {
+  position: absolute;
+  outline: 2px solid var(--frame);
+  outline-offset: 0;
+  pointer-events: none;
+  border-radius: 2px;
+}
+
+.empty-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--muted);
+  padding: 24px;
+}
+
+.empty-state h2 { color: var(--text); font-size: 18px; margin: 0 0 6px; }
+.empty-state p { margin: 0 0 16px; max-width: 40ch; line-height: 1.5; }
+
+/* ----------------------------------------------------------------- sidebar */
+
+/* ----------------------------------------------------------------- tree */
+
+.tree-rows { display: flex; flex-direction: column; }
+
+.tree-row {
+  display: flex;
+  align-items: stretch;
+  min-height: calc(25px * var(--ui));
+  white-space: nowrap;
+}
+
+/* One column per ancestor level, carrying the branch lines. */
+.t-guides { display: flex; flex: none; }
+.t-guides .g { width: calc(13px * var(--ui)); position: relative; }
+
+.t-guides .g.through::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--line);
+}
+
+/* The elbow: down to the middle, then across into the box. */
+.t-guides .g.elbow::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 0;
+  height: 50%;
+  border-left: 1px solid #454c59;
+}
+
+.t-guides .g.elbow.mid::before { height: 100%; }
+
+.t-guides .g.elbow::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  width: 7px;
+  border-top: 1px solid #454c59;
+}
+
+/* Each entry is a box, the way a section drawing would show it. */
+.t-box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--ui));
+  margin: 2px 0;
+  padding: calc(2px * var(--ui)) calc(7px * var(--ui));
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+}
+
+.t-box:hover { border-color: #454c59; background: #272c34; }
+
+/* The level you are standing in is filled solid. */
+.tree-row.here > .t-box {
+  background: #d8dde5;
+  border-color: #d8dde5;
+  color: #14161a;
+  font-weight: 600;
+}
+
+.tree-row.here > .t-box .t-count { color: #4a505c; }
+.tree-row.on > .t-box { border-color: var(--accent); background: #1d2731; }
+.tree-row.hit > .t-box .t-name { color: var(--accent); font-weight: 600; }
+
+/* Everything the selection lives inside, lit faintly so the chain reads. */
+.tree-row.ancestor > .t-box {
+  border-color: var(--accent-dim);
+  background: #1a2028;
+}
+
+.tree-row.ancestor > .t-box .t-name { color: #b9c6d4; }
+
+.tree-row.part > .t-box { background: none; color: var(--muted); }
+.tree-row.part > .t-box:hover { background: var(--panel-2); color: var(--text); }
+.tree-row.displaced > .t-box { border-style: dashed; border-color: #6d4550; }
+
+.t-box .twisty {
+  width: calc(16px * var(--ui));
+  height: calc(18px * var(--ui));
+  margin-left: -3px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: calc(13px * var(--ui));
+  line-height: 1;
+  border-radius: 2px;
+}
+
+.tree-row.here > .t-box .twisty { color: #4a505c; }
+.t-box .twisty.leaf { cursor: default; }
+.t-box .twisty:hover:not(.leaf) { color: var(--text); background: rgba(255, 255, 255, .08); }
+
+.t-box .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  border: 1px solid rgba(0, 0, 0, .45);
+}
+
+.t-box .dot.square { border-radius: 2px; background: #c39a5e; }
+.t-box .dot.square.hollow { background: none; border-color: #7d6a52; }
+
+.t-box .t-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.t-box .t-count { font-family: var(--mono); font-size: calc(10px * var(--ui)); color: var(--muted); flex: none; }
+
+.panel-section {
+  border-bottom: 1px solid var(--line-soft);
+  padding: calc(12px * var(--ui));
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: calc(11px * var(--ui));
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.panel-title .spacer { flex: 1; }
+
+.node-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.node-title h2 {
+  font-size: calc(16px * var(--ui));
+  margin: 0;
+  word-break: break-word;
+}
+
+.node-sub {
+  color: var(--muted);
+  font-size: calc(11px * var(--ui));
+  font-family: var(--mono);
+  margin-bottom: 10px;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.stat {
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+
+.stat .v { font-size: calc(15px * var(--ui)); font-family: var(--mono); }
+.stat .k { color: var(--muted); font-size: calc(10px * var(--ui)); text-transform: uppercase; letter-spacing: .05em; }
+
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.item-list { display: flex; flex-direction: column; gap: 1px; }
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--ui));
+  padding: calc(6px * var(--ui)) calc(8px * var(--ui));
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.item:hover { border-color: var(--line); }
+.item.on { border-color: var(--accent-dim); background: #1d2731; }
+.item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .qty { font-family: var(--mono); color: var(--muted); }
+.item .where { color: var(--muted); font-size: calc(10px * var(--ui)); font-family: var(--mono); }
+.item .low { color: var(--danger); }
+
+.result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+
+.result:hover { border-color: var(--accent-dim); }
+.result .r-name { display: flex; gap: 8px; }
+.result .r-name .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result .r-path {
+  color: var(--muted);
+  font-size: calc(10px * var(--ui));
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: calc(10px * var(--ui));
+  font-family: var(--mono);
+}
+
+.hint { color: var(--muted); font-size: calc(11px * var(--ui)); line-height: 1.5; }
+
+.link {
+  background: none;
+  border: 0;
+  padding: 0 0 0 6px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: calc(11px * var(--ui));
+}
+
+.link:hover { text-decoration: underline; }
+
+.swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, .5);
+  flex: none;
+}
+
+.swatches { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.swatch.pick {
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, .2);
+}
+
+.swatch.pick.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.swatch.pick.none {
+  background:
+    linear-gradient(45deg, transparent 45%, var(--muted) 45%, var(--muted) 55%, transparent 55%),
+    var(--panel-2);
+}
+
+.type-editor {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: #171a20;
+}
+
+/* ------------------------------------------------------------------ forms */
+
+.field { margin-bottom: 10px; }
+.field > label { display: block; color: var(--muted); font-size: calc(11px * var(--ui)); margin-bottom: 3px; }
+
+.field input, .field select, .field textarea {
+  width: 100%;
+  background: #12151a;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  outline: none;
+}
+
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent-dim); }
+.field textarea { resize: vertical; min-height: 56px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+.inline-form {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.inline-form { min-width: 0; }
+.inline-form .grow { flex: 1; min-width: 0; }
+.inline-form input.qty { width: 62px; flex: none; }
+.inline-form .btn { flex: none; }
+
+.inline-form input {
+  background: #12151a;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  outline: none;
+}
+
+/* ----------------------------------------------------------------- dialogs */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 9, 12, .68);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  padding: 16px;
+}
+
+.dialog {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .55);
+  width: min(calc(560px * var(--ui)), 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+}
+
+.dialog header .spacer { flex: 1; }
+.dialog .body { padding: 14px; overflow-y: auto; }
+.dialog footer {
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.preset {
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.preset:hover { border-color: var(--accent-dim); background: #262c35; }
+.preset.on { border-color: var(--accent); background: #1e2933; }
+.preset .p-label { font-weight: 600; margin-bottom: 2px; }
+.preset .p-hint { color: var(--muted); font-size: calc(11px * var(--ui)); line-height: 1.4; }
+
+/* ---------------------------------------------------------------- settings */
+
+.setting {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 7px 0;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.setting:last-of-type { border-bottom: 0; }
+.setting input { margin-top: 2px; flex: none; accent-color: var(--accent); }
+.setting .s-label { display: block; }
+.setting .s-hint { display: block; color: var(--muted); font-size: calc(11px * var(--ui)); line-height: 1.45; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+.chip input { accent-color: var(--accent); }
+
+/* ------------------------------------------------------------------ labels */
+
+.dialog.labels { width: min(calc(680px * var(--ui)), 100%); }
+
+.label-sheet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  background: #0e1014;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  min-height: 60px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.label-preview {
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .6);
+  image-rendering: crisp-edges;
+}
+
+/* ------------------------------------------------------------- walkthrough */
+
+.dialog.walkthrough { width: min(calc(620px * var(--ui)), 100%); }
+.dialog.walkthrough .body { line-height: 1.6; }
+.dialog.walkthrough .body p { margin: 0 0 10px; }
+.dialog.walkthrough .body b { color: #fff; font-weight: 600; }
+
+.wt-list { margin: 0; padding-left: 18px; }
+.wt-list li { margin-bottom: 8px; }
+
+.wt-note {
+  color: var(--muted);
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+  margin-top: 12px !important;
+}
+
+.wt-keys { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; }
+.wt-keys dt { font-weight: 600; color: #fff; white-space: nowrap; }
+.wt-keys dd { margin: 0; color: var(--muted); }
+.wt-keys code {
+  font-family: var(--mono);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: calc(11px * var(--ui));
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--text);
+}
+
+.dialog.walkthrough footer { align-items: center; }
+.wt-dots { display: flex; gap: 6px; }
+
+.wt-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--line);
+  cursor: pointer;
+  padding: 0;
+}
+
+.wt-dot.on { background: var(--accent); }
+.wt-dot:hover { background: var(--accent-dim); }
+
+/* ------------------------------------------------------------ context menu */
+
+.context-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: calc(180px * var(--ui));
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .6);
+  padding: 4px;
+}
+
+.context-menu .cm-title {
+  padding: 5px 9px 6px;
+  color: var(--muted);
+  font-size: calc(11px * var(--ui));
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  padding: 6px 9px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.cm-item:hover { background: var(--accent-dim); color: #eaf4fd; }
+.cm-item.danger { color: var(--danger); }
+.cm-item.danger:hover { background: #58312c; color: #ffd9d3; }
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 40px;
+  transform: translateX(-50%);
+  background: #2a1e1c;
+  border: 1px solid var(--danger);
+  color: #f2c9c4;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  z-index: 200;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+}
+
+/* ------------------------------------------------------------------ tablet */
+
+@media (max-width: 1100px) {
+  /* Not enough width for both panels and a usable map: float them instead. */
+  .app { grid-template-columns: 1fr; grid-template-areas: 'top' 'view' 'status'; }
+
+  .sidebar,
+  .tree-sidebar {
+    position: fixed;
+    top: 46px;
+    bottom: 22px;
+    z-index: 50;
+    width: min(320px, 90vw);
+  }
+
+  .sidebar { right: 0; box-shadow: -12px 0 30px rgba(0, 0, 0, .5); }
+  .tree-sidebar { left: 0; box-shadow: 12px 0 30px rgba(0, 0, 0, .5); }
+  .search { flex: 1 1 auto; }
+}
+
+/* ------------------------------------------------------------------- phone */
+
+/* Anything driven by a fingertip. Apple's own floor for a touch target is
+   44 px; these are the controls small enough to have missed it. */
+@media (pointer: coarse) {
+  .btn { padding: 8px 12px; }
+  .btn.ghost { padding: 8px 10px; }
+  .segmented button { padding: 9px 12px; }
+  .tree-row { min-height: 34px; }
+  .t-box { padding: 5px 8px; }
+  .t-box .twisty { width: 26px; height: 26px; font-size: calc(15px * var(--ui)); margin-left: -5px; }
+  .item { padding: 9px 8px; }
+  .cm-item { padding: 10px 11px; }
+  .setting { padding: 10px 0; }
+  .setting input { width: 20px; height: 20px; }
+  .item .where { padding: 4px 6px; }
+
+  /* Hover states are a lie on a touch screen — they stick after a tap and
+     make the last thing you touched look permanently active. */
+  .block:hover { filter: none; }
+  .viewport.editable .block.movable:hover > .block-head { background: rgba(0, 0, 0, .22); }
+
+  /* Every drag handle is a finger's width, and always drawn — there is no
+     hovering to discover one with. */
+  .grip-corner { background-color: rgba(90, 169, 230, .18); }
+
+  /* Under 16px, iOS zooms the whole page in when a field takes focus and never
+     zooms back out. This belongs to the *pointer*, not the window width: an
+     iPad in landscape is 1180px across and still does it. */
+  .search input,
+  .field input, .field select, .field textarea,
+  .inline-form input,
+  .draw-prompt input, .draw-prompt select {
+    font-size: calc(16px * var(--ui));
+  }
+
+  /* Likewise the notch and the home indicator, which a tablet has just as much
+     as a phone. `env()` resolves to 0 where there is nothing to avoid, so these
+     cost nothing on hardware without them. */
+  .topwrap { padding-top: env(safe-area-inset-top); }
+  .statusbar { padding-bottom: env(safe-area-inset-bottom); }
+
+  /* Margins rather than padding on the map: it measures its own border box to
+     lay the grid out, and padding would put every block an inset off. */
+  .viewport {
+    margin-bottom: env(safe-area-inset-bottom);
+    margin-left: env(safe-area-inset-left);
+    margin-right: env(safe-area-inset-right);
+  }
+
+  .sidebar:not(.sheet),
+  .tree-sidebar {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .sidebar:not(.sheet) { padding-right: env(safe-area-inset-right); }
+  .tree-sidebar { padding-left: env(safe-area-inset-left); }
+}
+
+/* The phone shell proper. Must stay in step with PHONE_QUERY in mobile.ts —
+   the second clause is a phone in landscape, which is wide but very short. */
+@media (max-width: 860px), (max-height: 520px) and (pointer: coarse) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'top' 'view' 'status';
+  }
+
+  /* Safe-area insets and 16px fields are handled by the coarse-pointer block
+     above, which covers tablets too; only the folding is width's business. */
+  .topbar {
+    gap: 2px;
+    padding: 5px 6px;
+    padding-left: max(6px, env(safe-area-inset-left));
+    padding-right: max(6px, env(safe-area-inset-right));
+    min-height: 44px;
+  }
+
+  .topbar.phone .btn.ghost {
+    padding: 9px 10px;
+    font-size: calc(16px * var(--ui));
+    line-height: 1;
+    flex: none;
+  }
+
+  .topbar.phone .btn.ghost:disabled { opacity: .3; }
+  .topbar.phone .crumbs { padding: 0 2px; }
+  .topbar.phone .crumb { padding: 6px 5px; font-size: calc(14px * var(--ui)); max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
+
+  .searchbar {
+    display: flex;
+    padding: 0 8px 8px;
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+  }
+
+  .searchbar .search { flex: 1; }
+
+  .search input { padding: 9px 30px 9px 11px; }
+
+  /* --- the tree, as a drawer over the map --- */
+
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    background: rgba(8, 9, 12, .5);
+  }
+
+  .tree-sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 50;
+    width: min(310px, 86vw);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 12px 0 34px rgba(0, 0, 0, .6);
+  }
+
+  /* --- the details, as a sheet under the map --- */
+
+  .sidebar.sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    z-index: 55;
+    width: auto;
+    height: 42dvh;
+    max-height: calc(100dvh - 92px);
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -14px 34px rgba(0, 0, 0, .55);
+    padding-bottom: env(safe-area-inset-bottom);
+    transition: height .16s ease;
+  }
+
+  .sidebar.sheet.full { height: calc(100dvh - 92px); }
+
+  /* The grab strip: a whole bar you can hit, showing a small handle. */
+  .sheet-grab {
+    flex: none;
+    display: block;
+    width: 100%;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .sheet-grab::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 8px;
+    width: 38px;
+    height: 4px;
+    margin-left: -19px;
+    border-radius: 2px;
+    background: #4a515e;
+  }
+
+  .sheet-grab:active::after { background: var(--muted); }
+  .sidebar.sheet .side-head { padding-top: 2px; }
+  .sidebar.sheet .side-foot { font-size: calc(12px * var(--ui)); }
+
+  /* The map controls live in the thumb zone, which is exactly where the sheet
+     comes up. Lift them onto it, and give up when it takes the whole screen. */
+  .app:has(.sidebar.sheet) .map-tools { bottom: calc(42dvh + 10px); }
+  .app:has(.sidebar.sheet.full) .map-tools { display: none; }
+
+  /* --- the ⋯ menu --- */
+
+  .m-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    background: rgba(8, 9, 12, .6);
+    display: flex;
+    align-items: flex-end;
+  }
+
+  .m-sheet {
+    width: 100%;
+    max-height: 92dvh;
+    overflow-y: auto;
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0;
+    padding: 0 14px 14px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+    box-shadow: 0 -18px 44px rgba(0, 0, 0, .6);
+  }
+
+  .m-sheet .sheet-grab { pointer-events: none; }
+  .m-group { padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+
+  .m-group-title {
+    color: var(--muted);
+    font-size: calc(11px * var(--ui));
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin-bottom: 8px;
+  }
+
+  .segmented.wide { display: flex; width: 100%; }
+  .segmented.wide button { flex: 1; }
+
+  .m-edit { border-bottom: 1px solid var(--line-soft); }
+
+  .m-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 11px 4px;
+    background: none;
+    border: 0;
+    border-radius: var(--radius);
+    text-align: left;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .m-row:active { background: var(--panel-2); }
+
+  .m-icon {
+    width: 24px;
+    flex: none;
+    text-align: center;
+    font-size: calc(16px * var(--ui));
+    color: var(--muted);
+  }
+
+  .m-text { min-width: 0; }
+  .m-label { display: block; font-size: calc(15px * var(--ui)); }
+  .m-hint { display: block; color: var(--muted); font-size: calc(11.5px * var(--ui)); line-height: 1.4; }
+
+  .m-stats {
+    color: var(--muted);
+    font-size: calc(11px * var(--ui));
+    font-family: var(--mono);
+    line-height: 1.6;
+    margin: 12px 0;
+  }
+
+  .btn.wide { width: 100%; justify-content: center; padding: 11px; }
+
+  /* --- dialogs, as sheets --- */
+
+  .overlay { padding: 0; place-items: end stretch; }
+
+  .dialog {
+    width: 100%;
+    max-height: 94dvh;
+    border-radius: 12px 12px 0 0;
+    border-bottom: 0;
+  }
+
+  .dialog .body { padding: 12px; }
+  .dialog footer {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    flex-wrap: wrap;
+  }
+
+  .dialog footer .btn { flex: 1; justify-content: center; min-width: 44%; }
+  .preset-grid { grid-template-columns: 1fr; }
+  .grid-3 { grid-template-columns: 1fr 1fr; }
+
+  /* The draw prompt is anchored to a rectangle that may be at the screen edge;
+     on a phone there is nowhere to put a floating card, so it docks. */
+  .draw-prompt {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    top: auto !important;
+    bottom: calc(8px + env(safe-area-inset-bottom)) !important;
+    width: auto;
+  }
+
+  .draw-prompt .dp-actions .btn { flex: 1; justify-content: center; }
+
+  .toast { left: 8px; right: 8px; bottom: calc(12px + env(safe-area-inset-bottom)); transform: none; }
+  .context-menu { min-width: 210px; }
+  .row-actions .btn { flex: 1 1 auto; justify-content: center; }
+}
+
+/* Held sideways there is width to spare and almost no height, so the details
+   go back to being a panel down the side. Nothing left to expand, so the grab
+   strip goes too — ✕ closes it. */
+@media (max-height: 520px) and (pointer: coarse) {
+  .sidebar.sheet,
+  .sidebar.sheet.full {
+    left: auto;
+    top: 0;
+    width: min(340px, 54vw);
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+    border-left: 1px solid var(--line);
+    border-top: 0;
+    padding-top: env(safe-area-inset-top);
+    padding-right: env(safe-area-inset-right);
+    box-shadow: -14px 0 34px rgba(0, 0, 0, .55);
+  }
+
+  .sidebar.sheet .sheet-grab { display: none; }
+}

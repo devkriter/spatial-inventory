@@ -1,0 +1,9 @@
+# The working tree is LF and so is the repository, on every platform. Without
+# this, Windows' core.autocrlf=true rewrites every line on checkout, and the
+# first `git diff` after cloning shows every file as entirely changed.
+* text=auto eol=lf
+
+# Never line-ending-convert these, and never try to diff them as text.
+*.png binary
+*.db binary
+*.ico binary
