@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cellAddress, formatUnits, size, slotOf } from '../layout';
 import { typeName } from '../palette';
 import type { SearchResult } from '../search';
@@ -43,12 +43,38 @@ export interface SidebarProps {
   /** Sheet only: whether it is at full height, and how to change that. */
   expanded?: boolean;
   onToggleHeight?: () => void;
+  /** Sheet only: how tall it ended up, so the map can stay clear of it. */
+  onHeight?: (px: number) => void;
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { searching, selected, sheet } = props;
+  const { searching, selected, sheet, onHeight } = props;
+
+  // Report how much of the screen this covers, measured rather than derived
+  // from the CSS so the two can never drift apart. Observed rather than read
+  // once, because the sheet animates between its peek and full heights.
+  const asideRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = asideRef.current;
+    if (!el || !onHeight) return;
+    if (!sheet) {
+      onHeight(0);
+      return;
+    }
+    const report = () => onHeight(el.getBoundingClientRect().height);
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      onHeight(0);
+    };
+  }, [sheet, onHeight]);
   return (
-    <aside className={sheet ? `sidebar sheet${props.expanded ? ' full' : ''}` : 'sidebar'}>
+    <aside
+      ref={asideRef}
+      className={sheet ? `sidebar sheet${props.expanded ? ' full' : ''}` : 'sidebar'}
+    >
       {sheet && (
         // The whole strip is the target, not just the little bar drawn on it —
         // a 4px handle is not something you can reliably hit with a thumb.

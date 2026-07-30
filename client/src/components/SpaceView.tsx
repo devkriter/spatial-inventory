@@ -29,7 +29,9 @@ import {
   type Placed,
 } from '../layout';
 import {
+  FULL_EXTENT,
   IDENTITY,
+  fitInto,
   ZOOM_STEP,
   atRest,
   clampView,
@@ -37,6 +39,7 @@ import {
   span,
   stageFor,
   zoomAt,
+  type Extent,
   type View,
 } from '../transform';
 import { colorOf, typeName } from '../palette';
@@ -104,6 +107,13 @@ export interface SpaceViewProps {
   editing?: boolean;
   /** Fingers, not a mouse — fatter grips, more slop, no hover affordances. */
   touch?: boolean;
+  /**
+   * Pixels along the bottom hidden behind something else — the details sheet on
+   * a phone. The map still occupies the whole window, so nothing here changes
+   * the layout; it changes what counts as *visible*, which is what the level is
+   * centred in and what panning is allowed to reach.
+   */
+  insetBottom?: number;
   /**
    * A touchscreen exists, whatever is driving the cursor. Enough to claim the
    * gesture from the browser, so a finger pans rather than scrolling the page.
@@ -237,9 +247,17 @@ export function SpaceView(props: SpaceViewProps) {
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     window.addEventListener('resize', measure);
+    // Mobile browsers show and hide the address bar without firing a window
+    // resize. The element really does change height — `100dvh` tracks it — so
+    // without this the map keeps laying out against the size it had before, and
+    // the bottom of the level sits under browser furniture.
+    window.visualViewport?.addEventListener('resize', measure);
+    window.visualViewport?.addEventListener('scroll', measure);
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', measure);
+      window.visualViewport?.removeEventListener('resize', measure);
+      window.visualViewport?.removeEventListener('scroll', measure);
     };
   }, []);
 
@@ -271,20 +289,59 @@ export function SpaceView(props: SpaceViewProps) {
   const viewRef = useRef(view);
   viewRef.current = view;
 
+  /**
+   * Whether the view is where *you* put it. Until you pan or zoom it belongs to
+   * the app, which is free to re-fit it when the visible area changes; once you
+   * have moved it deliberately, moving it back under you would be rude.
+   */
+  const userMoved = useRef(false);
+
   const baseRef = useRef(base);
   baseRef.current = base;
 
+  /**
+   * What fraction of the stage the drawing actually covers, refreshed every
+   * render from the blocks that were emitted. Panning is clamped against this,
+   * so anything drawn outside the level's own bounds can still be reached —
+   * clamping against the stage instead would lock the map at rest and leave it
+   * permanently out of view.
+   */
+  const extentRef = useRef<Extent>(FULL_EXTENT);
+
+  /**
+   * Clamp against the same measurement the layout was built from, never a fresh
+   * one. Measuring again here looks harmless and is not: the two disagree
+   * whenever the element has changed size since the last measure — which on a
+   * phone is every time the address bar slides in or out, because `100dvh`
+   * resizes the map without a window resize event. The layout would be centred
+   * for one width and the clamp would centre it for another, shunting the level
+   * sideways until part of it hung off the screen, with panning still locked
+   * because the clamp thought everything fitted.
+   */
+  const inset_ = Math.max(0, Math.min(props.insetBottom ?? 0, size_.h * 0.75));
+  const visibleRef = useRef({ w: size_.w, h: size_.h });
+  visibleRef.current = { w: size_.w, h: size_.h - inset_ };
+
   const setView = useCallback((next: View) => {
-    const host = ref.current?.getBoundingClientRect();
-    setViewRaw(
-      host ? clampView(baseRef.current, next, { w: host.width, h: host.height }) : next
-    );
+    setViewRaw(clampView(baseRef.current, next, visibleRef.current, extentRef.current));
   }, []);
+
+  // Something covered or uncovered part of the map — the details sheet, most
+  // often — so what was centred no longer is. Re-fit into what is left, which
+  // lifts the level clear of the sheet as it opens and settles it back after.
+  useEffect(() => {
+    if (userMoved.current) {
+      setView(viewRef.current); // just re-clamp; keep where they put it
+      return;
+    }
+    setViewRaw(fitInto(baseRef.current, visibleRef.current, extentRef.current));
+  }, [inset_, setView]);
 
   // A new level is a new drawing; it opens at rest, filling the window. Keeping
   // the old pan would drop you into the corner of somewhere you have not seen.
   useEffect(() => {
     setViewRaw(IDENTITY);
+    userMoved.current = false;
   }, [root.c.id, mode]);
 
   const stage = stageFor(base, view);
@@ -470,6 +527,7 @@ export function SpaceView(props: SpaceViewProps) {
     const p = screenPoint(e);
     // Trackpads send many small deltas and a mouse wheel a few large ones;
     // scaling by the magnitude keeps both feeling like the same speed.
+    userMoved.current = true;
     const steps = Math.sign(e.deltaY) * Math.min(1, Math.abs(e.deltaY) / 100);
     setView(zoomAt(baseRef.current, viewRef.current, viewRef.current.k * ZOOM_STEP ** -steps, p.x, p.y));
   };
@@ -692,6 +750,7 @@ export function SpaceView(props: SpaceViewProps) {
     if (travel > LONG_PRESS_SLOP) cancelLongPress();
 
     if (gesture.kind === 'pinch') {
+      userMoved.current = true;
       const [a, b] = [...pointers.current.values()];
       if (!a || !b) return;
       const s = span(a, b);
@@ -711,6 +770,7 @@ export function SpaceView(props: SpaceViewProps) {
     if (gesture.kind === 'pan') {
       if (!isDrag) return;
       dragged.current = true;
+      userMoved.current = true;
       const p = screenPoint(e);
       setView(panBy(gesture.view, p.x - gesture.from.x, p.y - gesture.from.y));
       return;
@@ -942,6 +1002,30 @@ export function SpaceView(props: SpaceViewProps) {
     for (const placed of interior.placed) emitBlock(placed, root, 0, ctx);
     hitsRef.current = hits;
 
+    // The union of the level's own frame and every block drawn in it, as
+    // fractions of the stage. A child whose slot reaches past its parent's grid
+    // is drawn outside the frame, and without this it could never be panned to.
+    if (stage.w > 0 && stage.h > 0) {
+      let x0 = interior.frame.x;
+      let x1 = interior.frame.x + interior.frame.w;
+      let y0 = interior.frame.y;
+      let y1 = interior.frame.y + interior.frame.h;
+      for (const entry of hits) {
+        x0 = Math.min(x0, entry.rect.x);
+        y0 = Math.min(y0, entry.rect.y);
+        x1 = Math.max(x1, entry.rect.x + entry.rect.w);
+        y1 = Math.max(y1, entry.rect.y + entry.rect.h);
+      }
+      extentRef.current = {
+        x0: (x0 - stage.x) / stage.w,
+        x1: (x1 - stage.x) / stage.w,
+        y0: (y0 - stage.y) / stage.h,
+        y1: (y1 - stage.y) / stage.h,
+      };
+    } else {
+      extentRef.current = FULL_EXTENT;
+    }
+
     if (carry) {
       if (carry.onto) {
         // Dropping onto the level itself has no block to outline, so the stage
@@ -1130,7 +1214,7 @@ export function SpaceView(props: SpaceViewProps) {
           {zoomed && (
             <button
               className="map-tool readout"
-              onClick={() => setViewRaw(IDENTITY)}
+              onClick={() => { userMoved.current = false; setViewRaw(IDENTITY); }}
               title="Back to fitting the window"
               aria-label="Fit the level to the window"
             >

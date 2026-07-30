@@ -91,6 +91,8 @@ export default function App() {
    * while you are looking for a resistor at the bench you do not mean it.
    */
   const [touchEditing, setTouchEditing] = useState(false);
+  /** How much of the map the details sheet is covering, so it can keep clear. */
+  const [sheetHeight, setSheetHeight] = useState(0);
   const editing = !touch || touchEditing;
 
   const changeSettings = useCallback((patch: Partial<Settings>) => {
@@ -682,6 +684,7 @@ export default function App() {
         editing={editing}
         touch={touch}
         anyTouch={anyTouch}
+        insetBottom={phone ? sheetHeight : 0}
         singleClickEnters={settings.singleClickEnters}
         clickOutsideToGoBack={settings.clickOutsideToGoBack}
         // A long press is how a phone raises a context menu; wiring that to
@@ -722,6 +725,7 @@ export default function App() {
       {showDetails && (
         <Sidebar
           sheet={phone}
+          onHeight={setSheetHeight}
           expanded={sheet === 'full'}
           onToggleHeight={() => setSheet((s) => (s === 'full' ? 'peek' : 'full'))}
           tree={tree}

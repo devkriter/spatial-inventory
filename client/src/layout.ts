@@ -315,6 +315,16 @@ const TILE_ASPECT = 3.2;
 /** Below this, one grid cell is too small to be worth drawing a slot in. */
 const SLOT_MIN_PX = 11;
 
+/** …unless there are only this many parts, where position still beats size. */
+const SLOT_FEW = 4;
+
+/**
+ * The most of a region one slot-shaped tile may claim while being snapped up to
+ * a legible size. Legibility is measured in pixels and the grid is not, so
+ * without a ceiling the snapping runs away on small drawings.
+ */
+const MAX_TILE_SHARE = 0.34;
+
 /** A list row carries one line of text, so it needs far less height. */
 const ROW_MIN_W = 46;
 const ROW_MIN_H = 11;
@@ -354,8 +364,20 @@ function cells(items: Item[], region: Rect, cols: number, dense: boolean, hidden
   const rows = Math.ceil(count / cols);
   // Cap the cell size and anchor top-left. A single part in a wide drawer should
   // read as one labelled chip with room to spare, not as a full-width bar.
-  const w = Math.min(region.w / cols, TILE_MAX_W);
-  const h = Math.min(region.h / rows, dense ? ROW_MAX_H : TILE_MAX_H);
+  //
+  // The caps above are absolute pixels, which is no help on a small drawing:
+  // 240px is wider than a whole closet in a preview on a phone, so it never
+  // binds and one part ends up filling the region. Hence the share cap as well
+  // — a tile may not take more than a third of what it sits in, whatever the
+  // scale. List rows are exempt: spanning the width is what makes a list read
+  // as a list.
+  const w = dense
+    ? Math.min(region.w / cols, TILE_MAX_W)
+    : Math.min(region.w / cols, TILE_MAX_W, region.w * MAX_TILE_SHARE);
+  const h = Math.min(
+    region.h / rows,
+    dense ? ROW_MAX_H : Math.min(TILE_MAX_H, region.h * MAX_TILE_SHARE)
+  );
   const placed: Placed[] = [];
   for (let i = 0; i < count; i++) {
     const rect = {
@@ -399,9 +421,18 @@ export function packItems(items: Item[], region: Rect, cell?: { w: number; h: nu
   // Preferred: one part per grid cell, snapped up to however many cells it takes
   // to be readable. A drawer with one thing in it shows one small tile and a lot
   // of free space, which is the truth — it does not stretch to fill the drawer.
+  //
+  // The snapping is capped, because the minimum is in *pixels* and the cell is
+  // not. Left uncapped, the same holding drawn in a small preview claims a far
+  // larger share of it than the same holding on a big screen — one part in a
+  // closet preview on a phone ends up a slab across the whole closet. Past the
+  // cap it simply renders small and wordless, which is what the desktop already
+  // does and is honest about how much room the thing actually takes.
   if (cell && cell.w > 0 && cell.h > 0) {
-    const spanX = Math.max(1, Math.ceil(TILE_MIN_W / cell.w));
-    const spanY = Math.max(1, Math.ceil(TILE_MIN_H / cell.h));
+    const capX = Math.max(1, Math.floor((region.w * MAX_TILE_SHARE) / cell.w));
+    const capY = Math.max(1, Math.floor((region.h * MAX_TILE_SHARE) / cell.h));
+    const spanX = Math.min(Math.max(1, Math.ceil(TILE_MIN_W / cell.w)), capX);
+    const spanY = Math.min(Math.max(1, Math.ceil(TILE_MIN_H / cell.h)), capY);
     const tileW = spanX * cell.w;
     const tileH = spanY * cell.h;
     const perRow = Math.floor(region.w / tileW);
@@ -485,8 +516,16 @@ export function layoutInterior(
   // Drawing parts at their real slots only helps while a slot is big enough to
   // see. Squeezed into a nested strip, a 1 × 1 slot becomes a 4px sliver — so
   // below that the whole tray gives up on geometry and becomes a list instead.
+  //
+  // Except when there are only a few. That trade — geometry for legibility —
+  // is worth making for thirty parts, where thirty specks are noise and a list
+  // is information. For one or two it is a bad bargain: the part loses its real
+  // position *and*, having become "loose", gets promoted to a chip sized for
+  // reading rather than for how much room it takes. A speck in the right place
+  // is more honest than a slab in the wrong one.
   const slotsLegible =
-    viewport.w / units.w >= SLOT_MIN_PX && viewport.h / units.h >= SLOT_MIN_PX;
+    (viewport.w / units.w >= SLOT_MIN_PX && viewport.h / units.h >= SLOT_MIN_PX) ||
+    node.items.length <= SLOT_FEW;
   const pinned = slotsLegible ? node.items.filter((item) => slotOf(item)) : [];
   const loose = slotsLegible ? node.items.filter((item) => !slotOf(item)) : node.items;
   // Anything with a real position needs the grid's proportions kept. Only a
