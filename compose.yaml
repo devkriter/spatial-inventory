@@ -30,7 +30,11 @@ services:
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?put TUNNEL_TOKEN in .env}
+      # Deliberately not `:?required`. Compose interpolates the whole file
+      # whatever profile you asked for, so a required variable here makes the
+      # *app* unmanageable until a token exists. cloudflared says so itself if
+      # this is empty, and only when you actually start it.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     depends_on:
       - inventory
     profiles:
