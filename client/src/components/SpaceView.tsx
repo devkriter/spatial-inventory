@@ -1552,27 +1552,84 @@ const boxStyle = (r: Rect, depth: number): CSSProperties => ({
  * gradient plus the bevel in `.block`. Depth darkens the fill so nesting stays
  * legible where borders are only a pixel apart.
  */
+type Rgb = [number, number, number];
+
+const INK_DARK = '#2a1f10';
+const INK_LIGHT = '#f4efe7';
+const INK_DARK_RGB: Rgb = [0x2a, 0x1f, 0x10];
+const INK_LIGHT_RGB: Rgb = [0xf4, 0xef, 0xe7];
+
+/** A stored colour, or null if it is not a colour this can reason about. */
+function parseHex(value: string): Rgb | null {
+  const m = /^#([0-9a-f]{6})$/i.exec(value.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** The uncoloured default, `hsl(30 9% l%)`, resolved so its ink can be judged. */
+function defaultFill(lightness: number): Rgb {
+  const s = 0.09;
+  const c = (1 - Math.abs(2 * lightness - 1)) * s;
+  // Hue 30° sits in the first sector, so the channels are [c, x, 0] + m.
+  const x = c * (1 - Math.abs(((30 / 60) % 2) - 1));
+  const m = lightness - c / 2;
+  return [
+    Math.round((c + m) * 255),
+    Math.round((x + m) * 255),
+    Math.round((0 + m) * 255),
+  ];
+}
+
+const mix = (a: Rgb, b: Rgb, p: number): Rgb =>
+  [0, 1, 2].map((i) => Math.round(a[i] + (b[i] - a[i]) * p)) as Rgb;
+
+/** WCAG relative luminance, which is not the same thing as naive luma. */
+function luminance([r, g, b]: Rgb): number {
+  const chan = (v: number) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+}
+
+const contrast = (a: Rgb, b: Rgb): number => {
+  const [x, y] = [luminance(a), luminance(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+
+/**
+ * SpaceSniffer's blocks read as physical objects because of the light/dark
+ * gradient plus the bevel in `.block`. Depth darkens the fill so nesting stays
+ * legible where borders are only a pixel apart.
+ */
 function fillStyle(color: string | null, depth: number): CSSProperties {
+  const shade = Math.min(depth * 7, 28);
   // Untyped and uncoloured: a warm grey rather than the tan this used to be.
   // The default is on more blocks than any single swatch, so a saturated one
   // decides what the whole map looks like before you have chosen anything.
-  const base = color || `hsl(30 9% ${Math.max(30, 58 - depth * 6)}%)`;
-  const shade = Math.min(depth * 7, 28);
+  //
+  // Anything that is not a plain hex falls back to that same grey rather than
+  // being pasted into the gradient. A junk value — from a hand-edited import,
+  // say — would otherwise make `color-mix` invalid and the block would render
+  // with no background at all, which on a dark page means invisible.
+  const rgb = (color && parseHex(color)) || defaultFill(Math.max(30, 58 - depth * 6) / 100);
+  const base = `rgb(${rgb[0]} ${rgb[1]} ${rgb[2]})`;
+
+  // Judge the ink against the middle of the gradient it actually sits on, and
+  // against both inks, rather than off a luma threshold on the base colour.
+  // That threshold put light ink on mid-tones where dark ink reads better.
+  const midpoint = mix(mix(rgb, [255, 255, 255], 0.15), mix(rgb, [0, 0, 0], (15 + shade) / 100), 0.5);
+
   return {
     background: `linear-gradient(157deg,
       color-mix(in srgb, ${base}, #fff 15%),
       color-mix(in srgb, ${base}, #000 ${15 + shade}%))`,
-    color: textOn(base),
+    color:
+      contrast(midpoint, INK_DARK_RGB) >= contrast(midpoint, INK_LIGHT_RGB)
+        ? INK_DARK
+        : INK_LIGHT,
   };
-}
-
-/** Dark ink on the warm fills; flip to light if a custom colour is dark. */
-function textOn(base: string): string {
-  const hex = /^#([0-9a-f]{6})$/i.exec(base.trim());
-  if (!hex) return '#2a1f10';
-  const n = parseInt(hex[1], 16);
-  const luma = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
-  return luma > 0.5 ? '#2a1f10' : '#f4efe7';
 }
 
 /* ------------------------------------------------------------------ helpers */

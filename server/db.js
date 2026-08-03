@@ -142,13 +142,16 @@ function seedStorageTypes() {
   const { n } = get('SELECT COUNT(*) AS n FROM storage_types');
   if (Number(n) > 0) return;
 
+  // Spread across the palette rather than six browns a shade apart, which is
+  // what a fresh database used to start as — and still would on any new
+  // install, since these colours are only written when there are none.
   const starters = [
-    ['Closet',      'free', 16, 20, '#8a6a45'],
-    ['Shelf',       'free', 16, 3,  '#8f7550'],
-    ['Drawer unit', 'grid', 12, 12, '#a07a4a'],
-    ['Drawer',      'free', 2,  2,  '#bb9159'],
-    ['Rack',        'grid', 8,  2,  '#7d6448'],
-    ['Box',         'free', 4,  4,  '#96703f'],
+    ['Closet',      'free', 16, 20, '#757c85'],
+    ['Shelf',       'free', 16, 3,  '#5f8bb2'],
+    ['Drawer unit', 'grid', 12, 12, '#4a6b8a'],
+    ['Drawer',      'free', 2,  2,  '#86aacb'],
+    ['Rack',        'grid', 8,  2,  '#6f7c52'],
+    ['Box',         'free', 4,  4,  '#a07a4a'],
   ];
   const stmt = db.prepare(
     'INSERT INTO storage_types (name, layout, cols, rows, color, sort) VALUES (?, ?, ?, ?, ?, ?)'
