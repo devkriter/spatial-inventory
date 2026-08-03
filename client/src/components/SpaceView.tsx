@@ -1553,7 +1553,10 @@ const boxStyle = (r: Rect, depth: number): CSSProperties => ({
  * legible where borders are only a pixel apart.
  */
 function fillStyle(color: string | null, depth: number): CSSProperties {
-  const base = color || `hsl(32 36% ${Math.max(28, 60 - depth * 6)}%)`;
+  // Untyped and uncoloured: a warm grey rather than the tan this used to be.
+  // The default is on more blocks than any single swatch, so a saturated one
+  // decides what the whole map looks like before you have chosen anything.
+  const base = color || `hsl(30 9% ${Math.max(30, 58 - depth * 6)}%)`;
   const shade = Math.min(depth * 7, 28);
   return {
     background: `linear-gradient(157deg,

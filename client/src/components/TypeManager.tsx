@@ -141,6 +141,13 @@ export function TypeManager({ types, usage, onCreate, onUpdate, onDelete, onClos
                       onClick={() => set('color', hex)}
                     />
                   ))}
+                  {!!draft.color && !SWATCHES.includes(draft.color) && (
+                    <button
+                      className="swatch pick on"
+                      style={{ background: draft.color }}
+                      title={`${draft.color} — kept from before`}
+                    />
+                  )}
                 </div>
               </div>
 

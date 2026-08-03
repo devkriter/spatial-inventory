@@ -980,7 +980,18 @@ button, input, select, textarea {
   flex: none;
 }
 
-.swatches { display: flex; flex-wrap: wrap; gap: 5px; }
+/* Six per row, because the palette is grouped in sixes — neutrals, blues,
+   greens, warms. Flow-wrapping would scramble that into one long ribbon. */
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(6, 22px);
+  gap: 5px;
+  width: max-content;
+}
+
+/* "Follow the type" is a different kind of choice from picking a colour, so it
+   sits above the grid rather than stealing the first cell and shifting a row. */
+.swatch.pick.none { margin-bottom: 7px; }
 
 .swatch.pick {
   width: 22px;

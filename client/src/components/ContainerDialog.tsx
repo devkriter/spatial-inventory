@@ -187,12 +187,12 @@ export function ContainerDialog({
 
           <div className="field">
             <label>Colour — blank follows the type</label>
+            <button
+              className={!draft.color ? 'swatch pick none on' : 'swatch pick none'}
+              title="Follow the type"
+              onClick={() => set('color', null)}
+            />
             <div className="swatches">
-              <button
-                className={!draft.color ? 'swatch pick none on' : 'swatch pick none'}
-                title="Follow the type"
-                onClick={() => set('color', null)}
-              />
               {SWATCHES.map((hex) => (
                 <button
                   key={hex}
@@ -202,6 +202,15 @@ export function ContainerDialog({
                   onClick={() => set('color', hex)}
                 />
               ))}
+              {/* Whatever was already chosen, even if the palette no longer
+                  offers it — otherwise editing a space would look uncoloured. */}
+              {!!draft.color && !SWATCHES.includes(draft.color) && (
+                <button
+                  className="swatch pick on"
+                  style={{ background: draft.color }}
+                  title={`${draft.color} — kept from before`}
+                />
+              )}
             </div>
           </div>
 
