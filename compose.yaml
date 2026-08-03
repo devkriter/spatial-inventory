@@ -11,6 +11,27 @@ services:
     container_name: inventory
     restart: unless-stopped
     ports:
+      # Localhost only, and only so you can curl it on the box. The tunnel
+      # reaches the app over the compose network, not through this.
       - "127.0.0.1:5178:5178"
     volumes:
       - ./data:/app/data
+
+  # Started separately: `docker compose --profile tunnel up -d`, once TUNNEL_TOKEN
+  # is in .env. Point the public hostname at `http://inventory:5178` — the
+  # service name on this network, which is why the app needs no public port.
+  #
+  # A tunnel is transport, not a lock. Put an Access policy in front of the
+  # hostname before it goes anywhere near the internet: this app has no login,
+  # and one unauthenticated POST to /api/import replaces the whole database.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: inventory-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?put TUNNEL_TOKEN in .env}
+    depends_on:
+      - inventory
+    profiles:
+      - tunnel
