@@ -1,0 +1,16 @@
+# Deployment for a host that reaches the internet through a Cloudflare tunnel.
+#
+# The port is published to 127.0.0.1 and nowhere else. The app has no login of
+# its own, so the only thing that may be allowed to reach it is cloudflared on
+# the same host — binding 0.0.0.0 here would put the whole inventory, including
+# the import endpoint that replaces the database, on the public IP.
+services:
+  inventory:
+    build: .
+    image: inventory-app
+    container_name: inventory
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5178:5178"
+    volumes:
+      - ./data:/app/data
