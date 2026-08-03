@@ -1,0 +1,24 @@
+{
+  "//": "node is not on the PATH that spawned processes inherit here, so `npm run dev` dies as soon as concurrently tries to start the API. These invoke node directly instead. `api` and `web` together are what `npm run dev` does; start api first, then web, and preview web.",
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "C:/Hermes/node/node.exe",
+      "runtimeArgs": ["--disable-warning=ExperimentalWarning", "--watch", "server/index.js"],
+      "port": 5178
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "C:/Hermes/node/node.exe",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js"],
+      "port": 5179
+    },
+    {
+      "name": "serve",
+      "runtimeExecutable": "C:/Hermes/node/node.exe",
+      "runtimeArgs": ["--disable-warning=ExperimentalWarning", "server/index.js"],
+      "port": 5178
+    }
+  ]
+}

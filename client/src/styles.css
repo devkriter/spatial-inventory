@@ -419,6 +419,14 @@ button, input, select, textarea {
   text-shadow: 0 1px 0 rgba(255, 255, 255, .2);
 }
 
+/* The squeezed strip a small block gets. Smaller type and less padding, but
+   still a strip — the contents are inset below it, which is the whole point. */
+.block-head.tight {
+  font-size: 10.5px;
+  padding: 0 4px;
+  border-bottom-color: rgba(0, 0, 0, .22);
+}
+
 .block-head .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .block-head .addr { font-family: var(--mono); font-weight: 500; opacity: .72; font-size: 11px; }
 

@@ -63,6 +63,9 @@ const LABEL_MIN_H = 18;
 /** A block taller than this gets a title strip instead of a centred label. */
 const HEAD_MIN_H = 52;
 const HEAD_H = 21;
+/** A squeezed strip, for blocks that show contents but cannot spare a full one. */
+const HEAD_H_TIGHT = 14;
+const HEAD_TIGHT_MIN_H = 30;
 const PAD = 3;
 const STAGE_PAD = 12;
 /**
@@ -683,10 +686,8 @@ export function SpaceView(props: SpaceViewProps) {
     // is always just a click — you can never nudge a drawer out of place while
     // trying to look inside it. Anything with no title bar (a part, or a block
     // too small for one) uses its whole face as the handle.
-    const byHead =
-      target.kind === 'container' && hasHeadStrip(target.node, box, props.maxDepth)
-        ? py <= box.y + HEAD_H
-        : true;
+    const strip = target.kind === 'container' ? headStripOf(target.node, box, props.maxDepth) : 0;
+    const byHead = strip > 0 ? py <= box.y + strip : true;
     if (!byHead) {
       setGesture(null);
       setDraft(null);
@@ -1301,8 +1302,26 @@ const showsContents = (node: Node, rect: Rect, maxDepth: number, depth: number):
  * wants its name and its size on show — that is exactly when you need to know
  * how much room is going spare.
  */
-const hasHeadStrip = (_node: Node, rect: Rect, _maxDepth: number, _depth = 0): boolean =>
-  rect.h > HEAD_MIN_H && rect.w > 60;
+/**
+ * How tall a title strip this block gets, or 0 for none.
+ *
+ * A strip is not decoration: children are inset below it, so it is the only
+ * place a name can go that the contents will not be drawn over. Without one the
+ * name becomes a label across the block's whole face and whatever is inside
+ * paints straight on top of it — legible or not depending on where the children
+ * happen to sit, which is no way to run a railway. So anything showing contents
+ * gets a strip if it can afford one at all, tight if that is all that fits.
+ */
+/** The strip as actually drawn for this node, for hit-testing the handle. */
+function headStripOf(node: Node, rect: Rect, maxDepth: number, depth = 0): number {
+  return headHeight(rect, showsContents(node, rect, maxDepth, depth));
+}
+
+function headHeight(rect: Rect, showContents: boolean): number {
+  if (rect.w <= 60) return 0; // no room for a readable name either way
+  if (rect.h > HEAD_MIN_H) return HEAD_H;
+  return showContents && rect.h > HEAD_TIGHT_MIN_H ? HEAD_H_TIGHT : 0;
+}
 
 /* ---------------------------------------------------------------- emitters */
 
@@ -1348,7 +1367,8 @@ function emitBlock(placed: Placed, parent: Node, depth: number, ctx: Ctx) {
   const dimmed = props.searching && !matched && !onPath;
 
   const showContents = showsContents(node, rect, props.maxDepth, depth);
-  const showHead = hasHeadStrip(node, rect, props.maxDepth, depth);
+  const head = headHeight(rect, showContents);
+  const tight = head > 0 && head < HEAD_H;
 
   const address = cellAddress(parent.c, node.c);
   const summary = describe(node);
@@ -1379,17 +1399,21 @@ function emitBlock(placed: Placed, parent: Node, depth: number, ctx: Ctx) {
         props.onOpen(node);
       }}
     >
-      {showHead ? (
+      {head > 0 ? (
         <>
-          <div className="block-head" style={{ height: HEAD_H }} title={`Drag to move ${node.c.name}`}>
-            {movable && rect.w > 90 && <span className="grip">⠿</span>}
+          <div
+            className={cx('block-head', tight && 'tight')}
+            style={{ height: head }}
+            title={`Drag to move ${node.c.name}`}
+          >
+            {movable && !tight && rect.w > 90 && <span className="grip">⠿</span>}
             <span className="grow">{node.c.name}</span>
             {/* Its own capacity, which is what you want to know at a glance —
                 where it sits is already obvious from looking at it. */}
-            {rect.w > 130 && <span className="addr">{node.c.cols}×{node.c.rows} U</span>}
+            {!tight && rect.w > 130 && <span className="addr">{node.c.cols}×{node.c.rows} U</span>}
           </div>
           {!showContents && (
-            <div className="block-empty" style={{ top: HEAD_H }}>
+            <div className="block-empty" style={{ top: head }}>
               {summary}
             </div>
           )}
@@ -1404,7 +1428,7 @@ function emitBlock(placed: Placed, parent: Node, depth: number, ctx: Ctx) {
   if (!showContents) return;
 
   const body = inset(
-    { x: rect.x, y: rect.y + (showHead ? HEAD_H : 0), w: rect.w, h: rect.h - (showHead ? HEAD_H : 0) },
+    { x: rect.x, y: rect.y + head, w: rect.w, h: rect.h - head },
     PAD
   );
   if (body.w < 6 || body.h < 6) return;
