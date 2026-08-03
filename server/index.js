@@ -247,7 +247,15 @@ function firstFreeCell(containerId, spanW = 1, spanH = 1) {
 app.post('/api/stock', h((req) => tx(() => {
   let partId = req.body.part_id ? Number(req.body.part_id) : null;
   const containerId = Number(req.body.container_id);
-  if (!containerId) throw new HttpError(400, 'container_id is required');
+  // Not `!containerId`: id 0 is the client's synthetic root, so a genuine
+  // attempt to put something at the top level used to fail claiming the id was
+  // missing. Say what is actually wrong instead.
+  if (!Number.isFinite(containerId) || containerId <= 0) {
+    throw new HttpError(400, 'a real place is required — the top level is not one');
+  }
+  if (!get('SELECT id FROM containers WHERE id = ?', containerId)) {
+    throw new HttpError(404, 'that place no longer exists');
+  }
 
   if (!partId) {
     const name = String(req.body.name || '').trim();

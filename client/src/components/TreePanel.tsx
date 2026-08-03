@@ -31,6 +31,8 @@ export interface TreePanelProps {
 
   /* right-click actions */
   onRenameContainer: (node: Node, name: string) => void;
+  /** Ask for a name in-app; the browser prompt is a different application. */
+  onAskName: (title: string, value: string, apply: (name: string) => void) => void;
   onDeleteContainer: (node: Node) => void;
   onAddInside: (node: Node) => void;
   onMakeLabels: (node: Node) => void;
@@ -60,10 +62,8 @@ export function TreePanel(props: TreePanelProps) {
     null
   );
 
-  const rename = (current: string, apply: (next: string) => void) => {
-    const next = window.prompt('New name', current);
-    if (next && next.trim() && next.trim() !== current) apply(next.trim());
-  };
+  const rename = (current: string, apply: (next: string) => void) =>
+    props.onAskName('Rename', current, apply);
 
   const placeMenu = (node: Node, e: { clientX: number; clientY: number }) =>
     setMenu({

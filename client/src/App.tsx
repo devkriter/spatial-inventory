@@ -14,6 +14,7 @@ import { PartNames } from './components/PartNames';
 import { Walkthrough, hasSeenWalkthrough, markWalkthroughSeen } from './components/Walkthrough';
 import { MobileMenu } from './components/MobileMenu';
 import { LocationMenu } from './components/LocationMenu';
+import { NameDialog } from './components/NameDialog';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { useAnyTouch, usePhone, useTouch } from './mobile';
 import {
@@ -70,6 +71,10 @@ export default function App() {
   /** Which container the label dialog is making labels for. */
   const [labelsFor, setLabelsFor] = useState<number | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
+  /** A one-field 'what shall it be called' dialog, in the app rather than the browser. */
+  const [naming, setNaming] = useState<
+    { title: string; value?: string; confirm?: string; onSave: (name: string) => void } | null
+  >(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
 
   /* ------------------------------------------------------------ phone shell */
@@ -371,6 +376,56 @@ export default function App() {
    * interior comes from the chosen type, because a 6×12 drawer unit still holds
    * a 12×12 grid of drawers. With no type, what you drew is what you get.
    */
+  /**
+   * A new location, made on the spot. Deliberately not the "add a space" form:
+   * that asks which type it is and how much room it takes up inside its parent,
+   * and a location has no parent and no footprint anywhere. All it needs is a
+   * name and a grid to start drawing on, so it gets the standard 24 × 16 and
+   * you are dropped straight into it.
+   */
+  const createLocation = () => {
+    setNaming({
+      title: 'New location',
+      confirm: 'Create',
+      onSave: (name) => makeLocation(name),
+    });
+  };
+
+  const makeLocation = (name: string) => {
+    void act(async () => {
+      const made = await api.createContainer({
+        parent_id: null,
+        name,
+        x: 0,
+        y: 0,
+        w: 6,
+        h: 5,
+        layout: 'grid',
+        cols: 24,
+        rows: 16,
+        row_origin: 'top',
+      });
+      setSelectedId(null);
+      setSelectedStockId(null);
+      setDisplacedId(null);
+      setRootId(made.id);
+    });
+  };
+
+  const renameLocation = (node: Node) => {
+    setNaming({
+      title: 'Rename location',
+      value: node.c.name,
+      onSave: (name) => {
+        if (name !== node.c.name) void act(() => api.updateContainer(node.c.id, { name }));
+      },
+    });
+  };
+
+  /** The tree renames spaces and items too; same dialog, different subject. */
+  const askName = (title: string, value: string, apply: (name: string) => void) =>
+    setNaming({ title, value, onSave: (name) => name !== value && apply(name) });
+
   const drawChild = (parent: Node, rect: UnitRect, name: string, typeId: number | null) => {
     const type = types.find((t) => t.id === typeId);
     void act(() =>
@@ -492,7 +547,8 @@ export default function App() {
               locations={locations}
               current={location}
               onPick={open}
-              onCreate={() => setDialog({ parent: world })}
+              onCreate={createLocation}
+              onRename={renameLocation}
             />
 
             {/* Only the tail of the trail below the location fits, and it is
@@ -563,7 +619,8 @@ export default function App() {
               locations={locations}
               current={location}
               onPick={open}
-              onCreate={() => setDialog({ parent: world })}
+              onCreate={createLocation}
+              onRename={renameLocation}
             />
 
             <nav className="crumbs">
@@ -697,6 +754,7 @@ export default function App() {
             openDetails();
           }}
           onClose={() => (phone ? setTreeOpen(false) : changeSettings({ showTree: false }))}
+          onAskName={askName}
           onRenameContainer={(node, name) => act(() => api.updateContainer(node.c.id, { name }))}
           onDeleteContainer={deleteContainer}
           onAddInside={(node) => setDialog({ parent: node })}
@@ -819,6 +877,7 @@ export default function App() {
           onDeletePart={(partId) => act(() => api.deletePart(partId))}
           workspace={state.workspace}
           onSaveWorkspace={(patch) => act(() => api.updateWorkspace(patch))}
+          onSaveLocation={(node, patch) => act(() => api.updateContainer(node.c.id, patch))}
         />
       )}
 
@@ -918,6 +977,17 @@ export default function App() {
       )}
 
       <PartNames parts={state.parts} />
+
+      {naming && (
+        <NameDialog
+          title={naming.title}
+          value={naming.value}
+          confirm={naming.confirm}
+          label="Name"
+          onSave={naming.onSave}
+          onClose={() => setNaming(null)}
+        />
+      )}
 
       {tourOpen && <Walkthrough onClose={closeTour} phone={phone} touch={touch} />}
 

@@ -1233,12 +1233,13 @@ export function SpaceView(props: SpaceViewProps) {
           // rectangle actually appears, not where it was laid out.
           anchor={unitsToScreen(pending, interior.frame, root.c)}
           types={props.types}
+          canHoldItems={root.c.id !== WORLD_ID}
           onCancel={() => {
             setPending(null);
             setDraft(null);
           }}
           onCreate={(what, name, typeId, qty) => {
-            if (what === 'part') props.onDrawPart(root, pending, name, qty);
+            if (what === 'part' && root.c.id !== WORLD_ID) props.onDrawPart(root, pending, name, qty);
             else props.onDrawChild(root, pending, name, typeId);
             setPending(null);
             setDraft(null);

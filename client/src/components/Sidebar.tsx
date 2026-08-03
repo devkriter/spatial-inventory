@@ -2,7 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { cellAddress, formatUnits, size, slotOf } from '../layout';
 import { typeName } from '../palette';
 import type { SearchResult } from '../search';
-import { WORLD_ID, type Item, type Layout, type Node, type Part, type Workspace } from '../types';
+import {
+  WORLD_ID,
+  type Container,
+  type Item,
+  type Layout,
+  type Node,
+  type Part,
+  type Workspace,
+} from '../types';
 import type { Tree } from '../tree';
 import { fmtQty } from './SpaceView';
 import { DisplacedPanel } from './DisplacedPanel';
@@ -31,6 +39,8 @@ export interface SidebarProps {
   onRemoveStock: (stockId: number) => void;
   workspace: Workspace;
   onSaveWorkspace: (patch: Partial<Workspace>) => void;
+  /** Save a location's own name and grid — it has no parent to be edited from. */
+  onSaveLocation: (node: Node, patch: Partial<Container>) => void;
   onSavePart: (partId: number, patch: Partial<Part>) => void;
   onMoveStock: (stockId: number, containerId: number) => void;
   /** A displaced part chosen in the tree, if any — it has no location to show. */
@@ -185,6 +195,9 @@ const pathLabel = (node: Node): string => node.path.map((c) => c.name).join('  �
 function NodePanel(props: SidebarProps) {
   const { node, root, onOpen, onSelectItem, onAddChild, onEditContainer, onDeleteContainer } = props;
   const isWorld = node.c.id === WORLD_ID;
+  // A location has nothing above it, so its own grid is set from here rather
+  // than from a parent that does not exist.
+  const isLocation = !isWorld && node.c.parent_id == null;
   const address = node.parent ? cellAddress(node.parent.c, node.c) : null;
   // Selected something without walking into it: say so, and offer the way in.
   const justSelected = node.c.id !== root.c.id;
@@ -275,7 +288,7 @@ function NodePanel(props: SidebarProps) {
         </div>
       )}
 
-      {isWorld && <WorkspaceEditor {...props} />}
+      {isLocation && <RoomEditor {...props} />}
 
       {node.items.length > 0 && (
         <div className="panel-section">
@@ -309,14 +322,18 @@ function NodePanel(props: SidebarProps) {
 }
 
 /**
- * The workshop has no parent to be edited from, so its own grid is set here.
- * Making it bigger never moves anything; making it smaller can leave furniture
- * hanging past the edge, so that is called out rather than silently clamped.
+ * A location has no parent to be edited from, so its own name and grid are set
+ * here. Making it bigger never moves anything; making it smaller can leave
+ * furniture hanging past the edge, so that is called out rather than silently
+ * clamped.
  */
-function WorkspaceEditor({ workspace, onSaveWorkspace, node }: SidebarProps) {
-  const [draft, setDraft] = useState<Partial<Workspace>>({});
-  const value = <K extends keyof Workspace>(key: K): Workspace[K] =>
-    (draft[key] as Workspace[K]) ?? workspace[key];
+function RoomEditor({ onSaveLocation, node }: SidebarProps) {
+  const [draft, setDraft] = useState<Partial<Container>>({});
+  // A fresh location resets the form — otherwise a half-typed name would follow
+  // you from one room to the next.
+  useEffect(() => setDraft({}), [node.c.id]);
+  const value = <K extends keyof Container>(key: K): Container[K] =>
+    (draft[key] as Container[K]) ?? node.c[key];
   const dirty = Object.keys(draft).length > 0;
 
   const overflowing = node.children.filter(
@@ -375,7 +392,7 @@ function WorkspaceEditor({ workspace, onSaveWorkspace, node }: SidebarProps) {
           className="btn primary"
           disabled={!dirty}
           onClick={() => {
-            onSaveWorkspace(draft);
+            onSaveLocation(node, draft);
             setDraft({});
           }}
         >

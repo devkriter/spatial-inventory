@@ -9,6 +9,8 @@ export interface DrawPromptProps {
   /** Where that rectangle landed on screen, so the prompt can sit beside it. */
   anchor: Rect;
   types: StorageType[];
+  /** False where a holding has nowhere to live — the synthetic root. */
+  canHoldItems?: boolean;
   onCreate: (what: 'container' | 'part', name: string, typeId: number | null, qty: number) => void;
   onCancel: () => void;
 }
@@ -17,7 +19,7 @@ export interface DrawPromptProps {
  * The small form that appears the moment you finish dragging out a rectangle.
  * Name it, pick a type, Enter. Fast enough to fill a 12×12 cabinet in one go.
  */
-export function DrawPrompt({ rect, anchor, types, onCreate, onCancel }: DrawPromptProps) {
+export function DrawPrompt({ rect, anchor, types, canHoldItems, onCreate, onCancel }: DrawPromptProps) {
   const [what, setWhat] = useState<'container' | 'part'>('container');
   const [name, setName] = useState('');
   const [typeId, setTypeId] = useState<string>('');
@@ -82,14 +84,16 @@ export function DrawPrompt({ rect, anchor, types, onCreate, onCancel }: DrawProm
         {tint && <span className="swatch" style={{ background: tint, marginRight: 6 }} />}
         New <strong>{size(rect)}</strong> here
       </div>
-      <div className="segmented dp-what">
-        <button className={what === 'container' ? 'on' : ''} onClick={() => setWhat('container')}>
-          Space
-        </button>
-        <button className={what === 'part' ? 'on' : ''} onClick={() => setWhat('part')}>
-          Item
-        </button>
-      </div>
+      {canHoldItems !== false && (
+        <div className="segmented dp-what">
+          <button className={what === 'container' ? 'on' : ''} onClick={() => setWhat('container')}>
+            Space
+          </button>
+          <button className={what === 'part' ? 'on' : ''} onClick={() => setWhat('part')}>
+            Item
+          </button>
+        </div>
+      )}
 
       <input
         ref={input}

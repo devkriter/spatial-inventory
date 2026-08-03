@@ -95,11 +95,13 @@ export function ensureLocationInTransaction() {
 }
 
 function needsLocation() {
-  const { n } = get('SELECT COUNT(*) AS n FROM containers WHERE parent_id IS NULL');
-  if (Number(n) === 0) return false; // nothing to move
   // Before and after look alike — spaces with no parent either way — so this
   // cannot be detected from the shape of the data. A marker row it is.
-  return !get("SELECT value FROM meta WHERE key = 'locations'");
+  if (get("SELECT value FROM meta WHERE key = 'locations'")) return false;
+  // An empty database needs one too, not just one with spaces to move. There
+  // must always be somewhere real to stand: with no location the top level is
+  // the synthetic root, which is not a row, so nothing can be put in it.
+  return true;
 }
 
 function migrateToLocations() {
@@ -120,7 +122,11 @@ function migrateToLocations() {
     made.lastInsertRowid
   );
   run("INSERT OR REPLACE INTO meta (key, value) VALUES ('locations', '1')");
-  console.log(`locations: created "${name}" and moved ${moved.changes} space(s) into it`);
+  console.log(
+    moved.changes
+      ? `locations: created "${name}" and moved ${moved.changes} space(s) into it`
+      : `locations: created "${name}"`
+  );
 }
 
 /**
