@@ -1,21 +1,21 @@
-import type { Container, Item, Node, Rect, SizeMode, UnitRect } from './types';
+import type { Space, Holding, Node, Rect, SizeMode, UnitRect } from './types';
 
 /* ------------------------------------------------------------- unit space */
 
-/** Interior extent of a container, in units. Units are square. */
-export function interiorUnits(c: Container): { w: number; h: number } {
+/** Interior extent of a space, in units. Units are square. */
+export function interiorUnits(c: Space): { w: number; h: number } {
   return { w: Math.max(c.cols, 1), h: Math.max(c.rows, 1) };
 }
 
 /**
- * Snap step for placements inside this container. The unit grid is drawn either
- * way as a visual reference; a free container just snaps at a finer step so
+ * Snap step for placements inside this space. The unit grid is drawn either
+ * way as a visual reference; a free space just snaps at a finer step so
  * things can sit between the lines.
  */
-export const snapStep = (c: Container): number => (c.layout === 'grid' ? 1 : 0.5);
+export const snapStep = (c: Space): number => (c.layout === 'grid' ? 1 : 0.5);
 
-/** Smallest rectangle you can draw inside this container. */
-export const minSpan = (c: Container): number => snapStep(c);
+/** Smallest rectangle you can draw inside this space. */
+export const minSpan = (c: Space): number => snapStep(c);
 
 export const snapTo = (value: number, step: number): number =>
   step > 0 ? Math.round(value / step) * step : value;
@@ -41,7 +41,7 @@ export function inset(r: Rect, by: number): Rect {
 }
 
 /** Map a rectangle of parent units onto the screen frame drawn for that parent. */
-export function unitsToScreen(rect: UnitRect, frame: Rect, parent: Container): Rect {
+export function unitsToScreen(rect: UnitRect, frame: Rect, parent: Space): Rect {
   const { w: cols, h: rows } = interiorUnits(parent);
   return {
     x: frame.x + (rect.x / cols) * frame.w,
@@ -56,7 +56,7 @@ export function screenToUnits(
   px: number,
   py: number,
   frame: Rect,
-  parent: Container
+  parent: Space
 ): { x: number; y: number } {
   const { w: cols, h: rows } = interiorUnits(parent);
   return {
@@ -96,8 +96,8 @@ export function clampResize(rect: UnitRect, siblings: UnitRect[]): UnitRect {
   return { x, y, w, h };
 }
 
-/** Clamp a rectangle so it stays inside the container's unit extent. */
-export function clampToInterior(rect: UnitRect, c: Container): UnitRect {
+/** Clamp a rectangle so it stays inside the space's unit extent. */
+export function clampToInterior(rect: UnitRect, c: Space): UnitRect {
   const { w: cols, h: rows } = interiorUnits(c);
   const w = Math.min(rect.w, cols);
   const h = Math.min(rect.h, rows);
@@ -195,20 +195,20 @@ export function squarify(values: number[], rect: Rect): Rect[] {
 
 export interface Placed {
   key: string;
-  kind: 'container' | 'item' | 'empty' | 'summary';
+  kind: 'space' | 'holding' | 'empty' | 'summary';
   rect: Rect;
   node?: Node;
-  item?: Item;
+  holding?: Holding;
   /** Unit coordinates of an empty slot. */
   cell?: { x: number; y: number };
-  /** How many parts a summary tile stands for. */
+  /** How many items a summary tile stands for. */
   count?: number;
   /** Draw as a single-line list row rather than a tile. */
   dense?: boolean;
 }
 
 export interface Interior {
-  /** The drawn surface of the container's inside, in screen pixels. */
+  /** The drawn surface of the space's inside, in screen pixels. */
   frame: Rect;
   placed: Placed[];
   /** True when `frame` is a faithful scale drawing rather than a treemap. */
@@ -218,32 +218,32 @@ export interface Interior {
 }
 
 const weightOf = (node: Node, mode: SizeMode): number =>
-  mode === 'qty' ? Math.max(node.totalQty, 1) : Math.max(node.totalItems, 1);
+  mode === 'qty' ? Math.max(node.totalQty, 1) : Math.max(node.totalHoldings, 1);
 
 // Quantities span several orders of magnitude (1 dev board vs 2000 resistors).
 // Compress them so a bulk bag does not swallow the drawer.
-const itemWeight = (item: Item, mode: SizeMode): number =>
-  mode === 'qty' ? 1 + Math.log2(1 + Math.max(item.stock.qty, 0)) : 1;
+const holdingWeight = (holding: Holding, mode: SizeMode): number =>
+  mode === 'qty' ? 1 + Math.log2(1 + Math.max(holding.row.qty, 0)) : 1;
 
-/** A part pinned to a slot on its container's grid. */
-export const slotOf = (item: Item): UnitRect | null =>
-  item.stock.x == null || item.stock.y == null
+/** An item pinned to a slot on its space's grid. */
+export const slotOf = (holding: Holding): UnitRect | null =>
+  holding.row.x == null || holding.row.y == null
     ? null
-    : { x: item.stock.x, y: item.stock.y, w: item.stock.w || 1, h: item.stock.h || 1 };
+    : { x: holding.row.x, y: holding.row.y, w: holding.row.w || 1, h: holding.row.h || 1 };
 
 /** Everything that already claims space inside `node`, in its units. */
-export function claims(node: Node, except?: Node | Item): UnitRect[] {
+export function claims(node: Node, except?: Node | Holding): UnitRect[] {
   const out: UnitRect[] = [];
-  for (const child of node.children) if (child !== except) out.push(child.c);
-  for (const item of node.items) {
-    if (item === except) continue;
-    const slot = slotOf(item);
+  for (const child of node.children) if (child !== except) out.push(child.space);
+  for (const holding of node.holdings) {
+    if (holding === except) continue;
+    const slot = slotOf(holding);
     if (slot) out.push(slot);
   }
   return out;
 }
 
-/** Grid occupancy of everything placed inside a container, one byte per cell. */
+/** Grid occupancy of everything placed inside a space, one byte per cell. */
 function occupancy(node: Node, cols: number, rows: number): Uint8Array {
   const taken = new Uint8Array(cols * rows);
   for (const box of claims(node)) {
@@ -257,12 +257,12 @@ function occupancy(node: Node, cols: number, rows: number): Uint8Array {
 }
 
 /**
- * Whole cells of a container not covered by any child. Meaningful as a grid
- * container's unfilled slots; for a free container it is only used internally
- * as a way to find empty space for loose parts, and is never drawn.
+ * Whole cells of a space not covered by any child. Meaningful as a grid
+ * space's unfilled slots; for a free space it is only used internally
+ * as a way to find empty space for loose items, and is never drawn.
  */
 export function emptyCells(node: Node): { x: number; y: number }[] {
-  const { w: cols, h: rows } = interiorUnits(node.c);
+  const { w: cols, h: rows } = interiorUnits(node.space);
   const taken = occupancy(node, cols, rows);
   const free: { x: number; y: number }[] = [];
   for (let y = 0; y < rows; y++) {
@@ -272,12 +272,12 @@ export function emptyCells(node: Node): { x: number; y: number }[] {
 }
 
 /**
- * The biggest solid rectangle of cells no child sits on — where loose parts can
+ * The biggest solid rectangle of cells no child sits on — where loose items can
  * go without being scattered around the children. Classic largest-rectangle-in-
  * a-histogram, run once per row.
  */
 export function largestFreeRect(node: Node): UnitRect | null {
-  const { w: cols, h: rows } = interiorUnits(node.c);
+  const { w: cols, h: rows } = interiorUnits(node.space);
   const taken = occupancy(node, cols, rows);
   const heights = new Array<number>(cols).fill(0);
   let best: UnitRect | null = null;
@@ -315,7 +315,7 @@ const TILE_ASPECT = 3.2;
 /** Below this, one grid cell is too small to be worth drawing a slot in. */
 const SLOT_MIN_PX = 11;
 
-/** …unless there are only this many parts, where position still beats size. */
+/** …unless there are only this many items, where position still beats size. */
 const SLOT_FEW = 4;
 
 /**
@@ -354,20 +354,20 @@ function bestColumns(
   return best;
 }
 
-/** Nothing stretches past this, so one part never becomes a slab. */
+/** Nothing stretches past this, so one item never becomes a slab. */
 const TILE_MAX_W = 240;
 const TILE_MAX_H = 44;
 const ROW_MAX_H = 22;
 
-function cells(items: Item[], region: Rect, cols: number, dense: boolean, hidden: number): Placed[] {
-  const count = items.length;
+function cells(holdings: Holding[], region: Rect, cols: number, dense: boolean, hidden: number): Placed[] {
+  const count = holdings.length;
   const rows = Math.ceil(count / cols);
-  // Cap the cell size and anchor top-left. A single part in a wide drawer should
+  // Cap the cell size and anchor top-left. A single item in a wide drawer should
   // read as one labelled chip with room to spare, not as a full-width bar.
   //
   // The caps above are absolute pixels, which is no help on a small drawing:
   // 240px is wider than a whole closet in a preview on a phone, so it never
-  // binds and one part ends up filling the region. Hence the share cap as well
+  // binds and one item ends up filling the region. Hence the share cap as well
   // — a tile may not take more than a third of what it sits in, whatever the
   // scale. List rows are exempt: spanning the width is what makes a list read
   // as a list.
@@ -390,41 +390,41 @@ function cells(items: Item[], region: Rect, cols: number, dense: boolean, hidden
     if (hidden > 0 && i === count - 1) {
       placed.push({ key: 'more', kind: 'summary', rect, count: hidden + 1, dense });
     } else {
-      placed.push({ key: `i${items[i].stock.id}`, kind: 'item', item: items[i], rect, dense });
+      placed.push({ key: `i${holdings[i].row.id}`, kind: 'holding', holding: holdings[i], rect, dense });
     }
   }
   return placed;
 }
 
 /**
- * Lay loose parts into whatever space is available, degrading in steps.
+ * Lay loose items into whatever space is available, degrading in steps.
  *
- * A container is drawn twice over, in two different projections: as a slice of
+ * A space is drawn twice over, in two different projections: as a slice of
  * its parent's *front* elevation, and — once you open it — as its own top-down
  * plan. A drawer that is one slice tall from the front can hold a 12 × 12 grid
  * of compartments from above, and there is no honest way to draw the second
  * inside the first. So rather than shrink the contents into slivers, the
  * presentation changes:
  *
- *   tiles    name and quantity, two lines, when every part gets a legible tile
- *   rows     one line each, so several times as many parts still fit and read
+ *   tiles    name and quantity, two lines, when every item gets a legible tile
+ *   rows     one line each, so several times as many items still fit and read
  *   +N more  when even rows run out, the last one stands in for the rest
  *   count    when nothing legible fits at all
  *
- * Completeness beats prettiness: tiles are only used when *all* the parts fit
+ * Completeness beats prettiness: tiles are only used when *all* the items fit
  * as tiles, otherwise the denser form that shows more of them wins.
  */
-export function packItems(items: Item[], region: Rect, cell?: { w: number; h: number }): Placed[] {
-  const n = items.length;
+export function packHoldings(holdings: Holding[], region: Rect, cell?: { w: number; h: number }): Placed[] {
+  const n = holdings.length;
   if (!n || region.w < 6 || region.h < 6) return [];
 
-  // Preferred: one part per grid cell, snapped up to however many cells it takes
+  // Preferred: one item per grid cell, snapped up to however many cells it takes
   // to be readable. A drawer with one thing in it shows one small tile and a lot
   // of free space, which is the truth — it does not stretch to fill the drawer.
   //
   // The snapping is capped, because the minimum is in *pixels* and the cell is
   // not. Left uncapped, the same holding drawn in a small preview claims a far
-  // larger share of it than the same holding on a big screen — one part in a
+  // larger share of it than the same holding on a big screen — one item in a
   // closet preview on a phone ends up a slab across the whole closet. Past the
   // cap it simply renders small and wordless, which is what the desktop already
   // does and is honest about how much room the thing actually takes.
@@ -438,10 +438,10 @@ export function packItems(items: Item[], region: Rect, cell?: { w: number; h: nu
     const perRow = Math.floor(region.w / tileW);
     const perCol = Math.floor(region.h / tileH);
     if (perRow >= 1 && perCol >= 1 && n <= perRow * perCol) {
-      return items.map((item, i) => ({
-        key: `i${item.stock.id}`,
-        kind: 'item' as const,
-        item,
+      return holdings.map((holding, i) => ({
+        key: `i${holding.row.id}`,
+        kind: 'holding' as const,
+        holding,
         rect: {
           x: region.x + (i % perRow) * tileW,
           y: region.y + Math.floor(i / perRow) * tileH,
@@ -454,16 +454,16 @@ export function packItems(items: Item[], region: Rect, cell?: { w: number; h: nu
 
   // Too many for that: fall back to filling the space, tiles first then rows.
   const tileCols = bestColumns(n, region, TILE_MIN_W, TILE_MIN_H, TILE_ASPECT);
-  if (tileCols) return cells(items, region, tileCols, false, 0);
+  if (tileCols) return cells(holdings, region, tileCols, false, 0);
 
   const rowCols = bestColumns(n, region, ROW_MIN_W, ROW_MIN_H, ROW_ASPECT);
-  if (rowCols) return cells(items, region, rowCols, true, 0);
+  if (rowCols) return cells(holdings, region, rowCols, true, 0);
 
   const cols = Math.max(1, Math.floor(region.w / ROW_MIN_W));
   const capacity = cols * Math.floor(region.h / ROW_MIN_H);
   if (capacity >= 2) {
     const shown = Math.min(n, capacity);
-    return cells(items.slice(0, shown), region, cols, true, n - shown);
+    return cells(holdings.slice(0, shown), region, cols, true, n - shown);
   }
 
   return [{ key: 'summary', kind: 'summary', rect: region, count: n }];
@@ -473,7 +473,7 @@ export function packItems(items: Item[], region: Rect, cell?: { w: number; h: nu
  * Lay out everything directly inside `node` within `viewport`.
  *
  * physical mode  - children keep their drawn positions and proportions; loose
- *                  parts fill whatever space the children left over.
+ *                  items fill whatever space the children left over.
  * items / qty    - the whole interior becomes a squarified treemap, so the
  *                  biggest holdings read as the biggest blocks.
  */
@@ -483,27 +483,27 @@ export function layoutInterior(
   mode: SizeMode,
   opts: { showEmpty?: boolean; letterbox?: boolean } = {}
 ): Interior {
-  // The top level is just another gridded container, so it needs no special
+  // The top level is just another gridded space, so it needs no special
   // case here: closets sit at their own coordinates like everything else.
   const placed: Placed[] = [];
 
   if (mode !== 'physical') {
     const entries: Placed[] = [
       ...node.children.map((child) => ({
-        key: `c${child.c.id}`,
-        kind: 'container' as const,
+        key: `c${child.space.id}`,
+        kind: 'space' as const,
         node: child,
         rect: { x: 0, y: 0, w: 0, h: 0 },
       })),
-      ...node.items.map((item) => ({
-        key: `i${item.stock.id}`,
-        kind: 'item' as const,
-        item,
+      ...node.holdings.map((holding) => ({
+        key: `i${holding.row.id}`,
+        kind: 'holding' as const,
+        holding,
         rect: { x: 0, y: 0, w: 0, h: 0 },
       })),
     ];
     const weights = entries.map((e) =>
-      e.kind === 'container' ? weightOf(e.node!, mode) : itemWeight(e.item!, mode)
+      e.kind === 'space' ? weightOf(e.node!, mode) : holdingWeight(e.holding!, mode)
     );
     const rects = squarify(weights, viewport);
     entries.forEach((e, i) => placed.push({ ...e, rect: rects[i] }));
@@ -512,24 +512,24 @@ export function layoutInterior(
 
   /* ---- physical ---- */
 
-  const units = interiorUnits(node.c);
-  // Drawing parts at their real slots only helps while a slot is big enough to
+  const units = interiorUnits(node.space);
+  // Drawing items at their real slots only helps while a slot is big enough to
   // see. Squeezed into a nested strip, a 1 × 1 slot becomes a 4px sliver — so
   // below that the whole tray gives up on geometry and becomes a list instead.
   //
   // Except when there are only a few. That trade — geometry for legibility —
-  // is worth making for thirty parts, where thirty specks are noise and a list
-  // is information. For one or two it is a bad bargain: the part loses its real
+  // is worth making for thirty items, where thirty specks are noise and a list
+  // is information. For one or two it is a bad bargain: the item loses its real
   // position *and*, having become "loose", gets promoted to a chip sized for
   // reading rather than for how much room it takes. A speck in the right place
   // is more honest than a slab in the wrong one.
   const slotsLegible =
     (viewport.w / units.w >= SLOT_MIN_PX && viewport.h / units.h >= SLOT_MIN_PX) ||
-    node.items.length <= SLOT_FEW;
-  const pinned = slotsLegible ? node.items.filter((item) => slotOf(item)) : [];
-  const loose = slotsLegible ? node.items.filter((item) => !slotOf(item)) : node.items;
+    node.holdings.length <= SLOT_FEW;
+  const pinned = slotsLegible ? node.holdings.filter((holding) => slotOf(holding)) : [];
+  const loose = slotsLegible ? node.holdings.filter((holding) => !slotOf(holding)) : node.holdings;
   // Anything with a real position needs the grid's proportions kept. Only a
-  // container holding nothing but loose parts can safely fill its whole block —
+  // space holding nothing but loose items can safely fill its whole block —
   // letterboxing a 12 × 12 plan inside a 12 × 1 slice is mostly empty margin.
   const anchored = node.children.length > 0 || pinned.length > 0;
   // True proportions at the level you are working in; a nested preview fills its
@@ -540,45 +540,45 @@ export function layoutInterior(
 
   for (const child of node.children) {
     placed.push({
-      key: `c${child.c.id}`,
-      kind: 'container',
+      key: `c${child.space.id}`,
+      kind: 'space',
       node: child,
-      rect: unitsToScreen(child.c, frame, node.c),
+      rect: unitsToScreen(child.space, frame, node.space),
     });
   }
 
-  for (const item of pinned) {
+  for (const holding of pinned) {
     placed.push({
-      key: `i${item.stock.id}`,
-      kind: 'item',
-      item,
-      rect: unitsToScreen(slotOf(item) as UnitRect, frame, node.c),
+      key: `i${holding.row.id}`,
+      kind: 'holding',
+      holding,
+      rect: unitsToScreen(slotOf(holding) as UnitRect, frame, node.space),
     });
   }
 
   if (loose.length) {
-    // Parts with nowhere of their own go in the largest rectangle nothing else
+    // Items with nowhere of their own go in the largest rectangle nothing else
     // claimed, so they stay one readable block rather than scattering.
     const hole = anchored ? largestFreeRect(node) : null;
     const region = anchored
       ? hole
-        ? unitsToScreen(hole, frame, node.c)
+        ? unitsToScreen(hole, frame, node.space)
         : bottomBand(frame)
       : frame;
     placed.push(
-      ...packItems(
+      ...packHoldings(
         loose,
         inset(region, 1),
         slotsLegible ? { w: frame.w / units.w, h: frame.h / units.h } : undefined
       )
     );
-  } else if (!pinned.length && opts.showEmpty !== false && node.c.layout === 'grid') {
+  } else if (!pinned.length && opts.showEmpty !== false && node.space.layout === 'grid') {
     for (const cell of emptyCells(node)) {
       placed.push({
         key: `e${cell.x}-${cell.y}`,
         kind: 'empty',
         cell,
-        rect: unitsToScreen({ ...cell, w: 1, h: 1 }, frame, node.c),
+        rect: unitsToScreen({ ...cell, w: 1, h: 1 }, frame, node.space),
       });
     }
   }
@@ -600,7 +600,7 @@ function bottomBand(frame: Rect): Rect {
  * while a free parent gets plain coordinates, because rows and columns do not
  * mean anything when things are just placed where they fit.
  */
-export function cellAddress(parent: Container, child: Container): string | null {
+export function cellAddress(parent: Space, child: Space): string | null {
   if (parent.layout === 'free') return `@ ${round(child.x)},${round(child.y)}`;
   const col = Math.floor(child.x) + 1;
   const row =

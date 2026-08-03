@@ -3,7 +3,7 @@ import { cellAddress, size, slotOf } from '../layout';
 import { colorOf } from '../palette';
 import type { SearchResult } from '../search';
 import type { Tree } from '../tree';
-import { WORLD_ID, type Item, type Node, type Part } from '../types';
+import { ROOT_ID, type Holding, type Node, type Item } from '../types';
 import { fmtQty } from './SpaceView';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 
@@ -18,27 +18,27 @@ export interface TreePanelProps {
    */
   location: Node;
   selectedId: number | null;
-  selectedStockId: number | null;
-  /** Parts in the catalogue that are not stored anywhere at all. */
-  displaced: Part[];
-  selectedPartId: number | null;
+  selectedHoldingId: number | null;
+  /** Items in the catalogue that are not stored anywhere at all. */
+  displaced: Item[];
+  selectedItemId: number | null;
   search: SearchResult;
   searching: boolean;
   onOpen: (node: Node) => void;
-  onReveal: (node: Node, item: Item | null) => void;
-  onSelectDisplaced: (part: Part) => void;
+  onReveal: (node: Node, holding: Holding | null) => void;
+  onSelectDisplaced: (item: Item) => void;
   onClose: () => void;
 
   /* right-click actions */
-  onRenameContainer: (node: Node, name: string) => void;
+  onRenameSpace: (node: Node, name: string) => void;
   /** Ask for a name in-app; the browser prompt is a different application. */
   onAskName: (title: string, value: string, apply: (name: string) => void) => void;
-  onDeleteContainer: (node: Node) => void;
+  onDeleteSpace: (node: Node) => void;
   onAddInside: (node: Node) => void;
   onMakeLabels: (node: Node) => void;
-  onRenamePart: (partId: number, name: string) => void;
-  onRemoveStock: (stockId: number) => void;
-  onDeletePart: (partId: number) => void;
+  onRenameItem: (itemId: number, name: string) => void;
+  onRemoveHolding: (holdingId: number) => void;
+  onDeleteItem: (itemId: number) => void;
 }
 
 /** Guides drawn to the left of a row: one per ancestor level. */
@@ -50,13 +50,13 @@ interface Guides {
 }
 
 /**
- * The whole inventory as an outline — every place, and every part in it. The map
+ * The whole inventory as an outline — every place, and every item in it. The map
  * answers "what is in this drawer"; this answers "where is everything", and is
  * the quicker way to walk somewhere several levels down.
  */
 export function TreePanel(props: TreePanelProps) {
   const { tree, root, searching, search, displaced } = props;
-  const [expanded, setExpanded] = useState<Set<number>>(() => new Set([WORLD_ID]));
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set([ROOT_ID]));
   const [showDisplaced, setShowDisplaced] = useState(true);
   const [menu, setMenu] = useState<{ x: number; y: number; title: string; items: MenuItem[] } | null>(
     null
@@ -69,39 +69,39 @@ export function TreePanel(props: TreePanelProps) {
     setMenu({
       x: e.clientX,
       y: e.clientY,
-      title: node.c.name,
+      title: node.space.name,
       items: [
         { label: 'Open', onPick: () => props.onOpen(node) },
-        { label: 'Rename…', onPick: () => rename(node.c.name, (n) => props.onRenameContainer(node, n)) },
+        { label: 'Rename…', onPick: () => rename(node.space.name, (n) => props.onRenameSpace(node, n)) },
         { label: 'Add inside…', onPick: () => props.onAddInside(node) },
         { label: 'Labels…', onPick: () => props.onMakeLabels(node) },
-        ...(node.c.id === WORLD_ID
+        ...(node.space.id === ROOT_ID
           ? []
-          : [{ label: 'Delete', danger: true, onPick: () => props.onDeleteContainer(node) }]),
+          : [{ label: 'Delete', danger: true, onPick: () => props.onDeleteSpace(node) }]),
       ],
     });
 
-  const partMenu = (item: Item, holder: Node, e: { clientX: number; clientY: number }) =>
+  const holdingMenu = (holding: Holding, holder: Node, e: { clientX: number; clientY: number }) =>
     setMenu({
       x: e.clientX,
       y: e.clientY,
-      title: item.part.name,
+      title: holding.item.name,
       items: [
-        { label: 'Show where it is', onPick: () => props.onReveal(holder, item) },
+        { label: 'Show where it is', onPick: () => props.onReveal(holder, holding) },
         {
           label: 'Rename…',
-          onPick: () => rename(item.part.name, (n) => props.onRenamePart(item.part.id, n)),
+          onPick: () => rename(holding.item.name, (n) => props.onRenameItem(holding.item.id, n)),
         },
         {
           label: 'Remove from here',
           danger: true,
-          onPick: () => props.onRemoveStock(item.stock.id),
+          onPick: () => props.onRemoveHolding(holding.row.id),
         },
         {
           label: 'Delete item everywhere',
           danger: true,
           onPick: () => {
-            if (confirm(`Delete "${item.part.name}" entirely?`)) props.onDeletePart(item.part.id);
+            if (confirm(`Delete "${holding.item.name}" entirely?`)) props.onDeleteItem(holding.item.id);
           },
         },
       ],
@@ -111,13 +111,13 @@ export function TreePanel(props: TreePanelProps) {
   useEffect(() => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      next.add(WORLD_ID);
+      next.add(ROOT_ID);
       for (const c of root.path) next.add(c.id);
-      next.add(root.c.id);
+      next.add(root.space.id);
       const picked = props.selectedId != null ? tree.byId.get(props.selectedId) : undefined;
       if (picked) {
         for (const c of picked.path) next.add(c.id);
-        next.add(picked.c.id);
+        next.add(picked.space.id);
       }
       return next;
     });
@@ -132,16 +132,16 @@ export function TreePanel(props: TreePanelProps) {
     const picked = props.selectedId != null ? tree.byId.get(props.selectedId) : undefined;
     const chain = new Set<number>();
     if (!picked) return chain; // nothing selected: nothing to trace
-    chain.add(WORLD_ID);
+    chain.add(ROOT_ID);
     for (const c of picked.path) chain.add(c.id);
-    chain.delete(picked.c.id); // the selection itself is marked differently
+    chain.delete(picked.space.id); // the selection itself is marked differently
     return chain;
   }, [props.selectedId, tree]);
 
   // While searching, open every branch that leads to a hit and hide the rest.
   const visible = useMemo(() => {
     if (!searching) return null;
-    const keep = new Set<number>([WORLD_ID]);
+    const keep = new Set<number>([ROOT_ID]);
     for (const id of search.matched) keep.add(id);
     for (const id of search.onPath) keep.add(id);
     return keep;
@@ -156,48 +156,48 @@ export function TreePanel(props: TreePanelProps) {
     });
 
   const matchedDisplaced = searching
-    ? displaced.filter((p) => search.hits.some((h) => h.item?.part.id === p.id))
+    ? displaced.filter((p) => search.hits.some((h) => h.holding?.item.id === p.id))
     : displaced;
 
   const rows: ReactNode[] = [];
   walk(props.location, { through: [], last: true });
 
   function walk(node: Node, guides: Guides) {
-    if (visible && !visible.has(node.c.id)) return;
+    if (visible && !visible.has(node.space.id)) return;
 
-    const isWorld = node.c.id === WORLD_ID;
-    const items = searching
-      ? node.items.filter((it) => search.matchedStock.has(it.stock.id))
-      : node.items;
+    const isRoot = node.space.id === ROOT_ID;
+    const holdings = searching
+      ? node.holdings.filter((it) => search.matchedHoldings.has(it.row.id))
+      : node.holdings;
     // The synthetic Displaced branch hangs off the top level like a child would.
-    const displacedBranch = isWorld && matchedDisplaced.length > 0;
-    const kids = node.children.length + items.length + (displacedBranch ? 1 : 0);
-    const open = expanded.has(node.c.id) || (!!visible && kids > 0);
+    const displacedBranch = isRoot && matchedDisplaced.length > 0;
+    const kids = node.children.length + holdings.length + (displacedBranch ? 1 : 0);
+    const open = expanded.has(node.space.id) || (!!visible && kids > 0);
 
     rows.push(
       <Row
-        key={`c${node.c.id}`}
+        key={`c${node.space.id}`}
         guides={guides}
         depth={guides.through.length}
         kind="space"
         state={
-          node.c.id === props.selectedId
+          node.space.id === props.selectedId
             ? 'on'
-            : node.c.id === root.c.id
+            : node.space.id === root.space.id
               ? 'here'
-              : ancestors.has(node.c.id)
+              : ancestors.has(node.space.id)
                 ? 'ancestor'
                 : undefined
         }
-        hit={searching && search.matched.has(node.c.id)}
+        hit={searching && search.matched.has(node.space.id)}
         open={kids > 0 ? open : undefined}
-        onToggle={() => toggle(node.c.id)}
+        onToggle={() => toggle(node.space.id)}
         onClick={() => props.onOpen(node)}
         onContextMenu={(e) => placeMenu(node, e)}
-        title={node.path.map((c) => c.name).join(' › ') || node.c.name}
+        title={node.path.map((c) => c.name).join(' › ') || node.space.name}
         colour={colorOf(node) ?? '#8a6a45'}
-        name={node.c.name}
-        trailing={node.totalItems > 0 ? String(node.totalItems) : undefined}
+        name={node.space.name}
+        trailing={node.totalHoldings > 0 ? String(node.totalHoldings) : undefined}
       />
     );
 
@@ -205,7 +205,7 @@ export function TreePanel(props: TreePanelProps) {
 
     // Work out which of these children is the last drawn thing, so its elbow
     // closes the branch rather than continuing it.
-    const childCount = node.children.length + items.length + (displacedBranch ? 1 : 0);
+    const childCount = node.children.length + holdings.length + (displacedBranch ? 1 : 0);
     let drawn = 0;
     const nextGuides = (): Guides => {
       drawn += 1;
@@ -214,25 +214,25 @@ export function TreePanel(props: TreePanelProps) {
 
     for (const child of node.children) walk(child, nextGuides());
 
-    for (const item of items) {
-      const slot = slotOf(item);
+    for (const holding of holdings) {
+      const slot = slotOf(holding);
       const g = nextGuides();
       rows.push(
         <Row
-          key={`i${item.stock.id}`}
+          key={`i${holding.row.id}`}
           guides={g}
           depth={g.through.length}
-          kind="part"
-          state={item.stock.id === props.selectedStockId ? 'on' : undefined}
-          hit={searching && search.matchedStock.has(item.stock.id)}
-          onClick={() => props.onReveal(node, item)}
-          onContextMenu={(e) => partMenu(item, node, e)}
-          title={`${item.part.name}\n${node.path.map((c) => c.name).join(' › ')}${
-            slot ? `\nslot ${cellAddress(node.c, { ...node.c, ...slot }) ?? ''} · ${size(slot)}` : ''
+          kind="holding"
+          state={holding.row.id === props.selectedHoldingId ? 'on' : undefined}
+          hit={searching && search.matchedHoldings.has(holding.row.id)}
+          onClick={() => props.onReveal(node, holding)}
+          onContextMenu={(e) => holdingMenu(holding, node, e)}
+          title={`${holding.item.name}\n${node.path.map((c) => c.name).join(' › ')}${
+            slot ? `\nslot ${cellAddress(node.space, { ...node.space, ...slot }) ?? ''} · ${size(slot)}` : ''
           }`}
           slotted={!!slot}
-          name={item.part.name}
-          trailing={fmtQty(item.stock.qty)}
+          name={holding.item.name}
+          trailing={fmtQty(holding.row.qty)}
         />
       );
     }
@@ -255,22 +255,22 @@ export function TreePanel(props: TreePanelProps) {
         />
       );
       if (showDisplaced) {
-        matchedDisplaced.forEach((part, i) => {
+        matchedDisplaced.forEach((item, i) => {
           const inner: Guides = {
             through: [...g.through, !g.last],
             last: i === matchedDisplaced.length - 1,
           };
           rows.push(
             <Row
-              key={`p${part.id}`}
+              key={`p${item.id}`}
               guides={inner}
               depth={inner.through.length}
-              kind="part"
-              state={part.id === props.selectedPartId ? 'on' : undefined}
-              onClick={() => props.onSelectDisplaced(part)}
-              title={`${part.name}\nNot stored anywhere — click to put it back or forget it`}
+              kind="holding"
+              state={item.id === props.selectedItemId ? 'on' : undefined}
+              onClick={() => props.onSelectDisplaced(item)}
+              title={`${item.name}\nNot stored anywhere — click to put it back or forget it`}
               slotted={false}
-              name={part.name}
+              name={item.name}
             />
           );
         });
@@ -278,7 +278,7 @@ export function TreePanel(props: TreePanelProps) {
     }
   }
 
-  const total = tree.flat.reduce((n, node) => n + node.items.length, 0);
+  const total = tree.flat.reduce((n, node) => n + node.holdings.length, 0);
 
   return (
     <aside className="tree-sidebar">
@@ -315,7 +315,7 @@ export function TreePanel(props: TreePanelProps) {
 interface RowProps {
   guides: Guides;
   depth: number;
-  kind: 'space' | 'part' | 'displaced';
+  kind: 'space' | 'holding' | 'displaced';
   state?: 'here' | 'on' | 'ancestor';
   hit?: boolean;
   /** Undefined when there is nothing to expand. */
@@ -378,7 +378,7 @@ function Row({
           <span className="twisty leaf" />
         )}
 
-        {kind === 'part' ? (
+        {kind === 'holding' ? (
           /* Hollow only in the overflow case, where the grid had no room left. */
           <span className={cx('dot', 'square', slotted === false && 'hollow')} />
         ) : (
@@ -392,4 +392,4 @@ function Row({
   );
 }
 
-const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(' ');
+const cx = (...classes: (string | false | null | undefined)[]) => classes.filter(Boolean).join(' ');

@@ -51,14 +51,14 @@ export function LocationMenu({
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <span className="loc-name">{current.c.name}</span>
+        <span className="loc-name">{current.space.name}</span>
         <span className="loc-caret">▾</span>
       </button>
 
       {open && (
         <div className="loc-menu" role="menu">
           {locations.map((node) => (
-            <div className="loc-row" key={node.c.id}>
+            <div className="loc-row" key={node.space.id}>
               <button
                 className={node === current ? 'loc-item on' : 'loc-item'}
                 role="menuitemradio"
@@ -70,19 +70,19 @@ export function LocationMenu({
               >
                 <span
                   className="dot"
-                  style={{ background: node.c.color || 'var(--muted)' }}
+                  style={{ background: node.space.color || 'var(--muted)' }}
                   aria-hidden
                 />
-                <span className="grow">{node.c.name}</span>
-                <span className="loc-count">{node.totalContainers}</span>
+                <span className="grow">{node.space.name}</span>
+                <span className="loc-count">{node.totalSpaces}</span>
               </button>
               {/* Always drawn, not revealed on hover — there is no hover on a
                   phone, and renaming a location is not a rare enough thing to
                   hide behind a right-click that touch cannot reach. */}
               <button
                 className="loc-rename"
-                title={`Rename ${node.c.name}`}
-                aria-label={`Rename ${node.c.name}`}
+                title={`Rename ${node.space.name}`}
+                aria-label={`Rename ${node.space.name}`}
                 onClick={() => {
                   setOpen(false);
                   onRename(node);

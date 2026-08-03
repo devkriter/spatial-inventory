@@ -3,18 +3,18 @@ import { cellAddress, formatUnits, size, slotOf } from '../layout';
 import { typeName } from '../palette';
 import type { SearchResult } from '../search';
 import {
-  WORLD_ID,
-  type Container,
-  type Item,
+  ROOT_ID,
+  type Space,
+  type Holding,
   type Layout,
   type Node,
-  type Part,
-  type Workspace,
+  type Item,
+  type RootSpace,
 } from '../types';
 import type { Tree } from '../tree';
 import { fmtQty } from './SpaceView';
 import { DisplacedPanel } from './DisplacedPanel';
-import { PART_NAME_LIST } from './PartNames';
+import { ITEM_NAME_LIST } from './ItemNames';
 
 export interface SidebarProps {
   tree: Tree;
@@ -23,31 +23,31 @@ export interface SidebarProps {
   node: Node;
   /** The level currently being drawn, so the panel can say where you are. */
   root: Node;
-  selected: Item | null;
+  selected: Holding | null;
   search: SearchResult;
   searching: boolean;
   /** Jump to a search hit and highlight it where it lives. */
-  onReveal: (node: Node, item: Item | null) => void;
+  onReveal: (node: Node, holding: Holding | null) => void;
   onOpen: (node: Node) => void;
-  onSelectItem: (item: Item | null, holder: Node) => void;
+  onSelectHolding: (holding: Holding | null, holder: Node) => void;
   onAddChild: (parent: Node) => void;
-  onEditContainer: (node: Node) => void;
+  onEditSpace: (node: Node) => void;
   onMakeLabels: (node: Node) => void;
-  onDeleteContainer: (node: Node) => void;
-  onAddStock: (containerId: number, name: string, qty: number) => void;
-  onSetQty: (stockId: number, qty: number) => void;
-  onRemoveStock: (stockId: number) => void;
-  workspace: Workspace;
-  onSaveWorkspace: (patch: Partial<Workspace>) => void;
+  onDeleteSpace: (node: Node) => void;
+  onAddHolding: (spaceId: number, name: string, qty: number) => void;
+  onSetQty: (holdingId: number, qty: number) => void;
+  onRemoveHolding: (holdingId: number) => void;
+  rootSpace: RootSpace;
+  onSaveRootSpace: (patch: Partial<RootSpace>) => void;
   /** Save a location's own name and grid — it has no parent to be edited from. */
-  onSaveLocation: (node: Node, patch: Partial<Container>) => void;
-  onSavePart: (partId: number, patch: Partial<Part>) => void;
-  onMoveStock: (stockId: number, containerId: number) => void;
-  /** A displaced part chosen in the tree, if any — it has no location to show. */
-  displacedPart: Part | null;
-  onPlaceDisplaced: (partId: number, containerId: number, qty: number) => void;
+  onSaveLocation: (node: Node, patch: Partial<Space>) => void;
+  onSaveItem: (itemId: number, patch: Partial<Item>) => void;
+  onMoveHolding: (holdingId: number, spaceId: number) => void;
+  /** A displaced item chosen in the tree, if any — it has no location to show. */
+  displacedItem: Item | null;
+  onPlaceDisplaced: (itemId: number, spaceId: number, qty: number) => void;
   onDismissDisplaced: () => void;
-  onDeletePart: (partId: number) => void;
+  onDeleteItem: (itemId: number) => void;
   /** Rendered as a bottom sheet rather than a side panel — the phone form. */
   sheet?: boolean;
   /** Sheet only: whether it is at full height, and how to change that. */
@@ -85,7 +85,7 @@ export function Sidebar(props: SidebarProps) {
   // state was 42% of the screen, which is a great deal of map to spend on a
   // preview of something you can already see.
   if (sheet && !props.expanded) {
-    const subject = props.displacedPart?.name ?? selected?.part.name ?? props.node.c.name;
+    const subject = props.displacedItem?.name ?? selected?.item.name ?? props.node.space.name;
     return (
       <aside ref={asideRef} className="sidebar sheet band">
         <button className="band-open" onClick={props.onToggleHeight}>
@@ -122,19 +122,19 @@ export function Sidebar(props: SidebarProps) {
         </button>
       </div>
       <div className="side-scroll">
-        {props.displacedPart ? (
+        {props.displacedItem ? (
           <DisplacedPanel
-            part={props.displacedPart}
+            item={props.displacedItem}
             tree={props.tree}
-            onSavePart={props.onSavePart}
+            onSaveItem={props.onSaveItem}
             onPlace={props.onPlaceDisplaced}
-            onForget={props.onDeletePart}
+            onForget={props.onDeleteItem}
             onDismiss={props.onDismissDisplaced}
           />
         ) : (
           <>
             {searching && <Results {...props} />}
-            {selected ? <PartPanel {...props} item={selected} /> : <NodePanel {...props} />}
+            {selected ? <ItemPanel {...props} holding={selected} /> : <NodePanel {...props} />}
           </>
         )}
       </div>
@@ -166,14 +166,14 @@ function Results({ search, onReveal }: SidebarProps) {
       {!shown.length && <p className="hint">Nothing matches. Try fewer words.</p>}
       {shown.map((hit) => (
         <button
-          key={hit.item ? `i${hit.item.stock.id}` : `c${hit.node.c.id}`}
+          key={hit.holding ? `i${hit.holding.row.id}` : `c${hit.node.space.id}`}
           className="result"
-          onClick={() => onReveal(hit.node, hit.item ?? null)}
+          onClick={() => onReveal(hit.node, hit.holding ?? null)}
         >
           <div className="r-name">
-            <span className="grow">{hit.item ? hit.item.part.name : hit.node.c.name}</span>
-            {hit.item ? (
-              <span className="badge">{fmtQty(hit.item.stock.qty)}</span>
+            <span className="grow">{hit.holding ? hit.holding.item.name : hit.node.space.name}</span>
+            {hit.holding ? (
+              <span className="badge">{fmtQty(hit.holding.row.qty)}</span>
             ) : (
               <span className="badge">{typeName(hit.node)}</span>
             )}
@@ -190,18 +190,18 @@ function Results({ search, onReveal }: SidebarProps) {
 
 const pathLabel = (node: Node): string => node.path.map((c) => c.name).join('  ›  ') || 'Workshop';
 
-/* -------------------------------------------------------------- container */
+/* -------------------------------------------------------------- space */
 
 function NodePanel(props: SidebarProps) {
-  const { node, root, onOpen, onSelectItem, onAddChild, onEditContainer, onDeleteContainer } = props;
-  const isWorld = node.c.id === WORLD_ID;
+  const { node, root, onOpen, onSelectHolding, onAddChild, onEditSpace, onDeleteSpace } = props;
+  const isRoot = node.space.id === ROOT_ID;
   // A location has nothing above it, so its own grid is set from here rather
   // than from a parent that does not exist.
-  const isLocation = !isWorld && node.c.parent_id == null;
-  const address = node.parent ? cellAddress(node.parent.c, node.c) : null;
+  const isLocation = !isRoot && node.space.parent_id == null;
+  const address = node.parent ? cellAddress(node.parent.space, node.space) : null;
   // Selected something without walking into it: say so, and offer the way in.
-  const justSelected = node.c.id !== root.c.id;
-  const loose = node.items.filter((item) => !slotOf(item));
+  const justSelected = node.space.id !== root.space.id;
+  const loose = node.holdings.filter((holding) => !slotOf(holding));
 
   return (
     <>
@@ -210,30 +210,30 @@ function NodePanel(props: SidebarProps) {
             something you clicked, otherwise the two are indistinguishable. */}
         <div className="panel-title" style={{ marginBottom: 6 }}>
           {justSelected
-            ? `Selected — inside ${root.c.name}`
-            : isWorld
+            ? `Selected — inside ${root.space.name}`
+            : isRoot
               ? 'You are at the top'
               : 'You are inside'}
         </div>
         <div className="node-title">
-          <h2>{node.c.name}</h2>
+          <h2>{node.space.name}</h2>
         </div>
         <div className="node-sub">
-          {isWorld
-            ? `${formatUnits(node.c)} ${node.c.layout} · everything you have`
-            : `${typeName(node)} · ${formatUnits(node.c)} ${node.c.layout} inside` +
+          {isRoot
+            ? `${formatUnits(node.space)} ${node.space.layout} · everything you have`
+            : `${typeName(node)} · ${formatUnits(node.space)} ${node.space.layout} inside` +
               (node.parent
-                ? ` · ${size(node.c)} U on the front of ${node.parent.c.name}${address ? ` at ${address}` : ''}`
+                ? ` · ${size(node.space)} U on the front of ${node.parent.space.name}${address ? ` at ${address}` : ''}`
                 : '')}
         </div>
 
         <div className="stat-row">
           <div className="stat">
-            <div className="v">{node.totalContainers}</div>
+            <div className="v">{node.totalSpaces}</div>
             <div className="k">spaces</div>
           </div>
           <div className="stat">
-            <div className="v">{node.totalItems}</div>
+            <div className="v">{node.totalHoldings}</div>
             <div className="k">items</div>
           </div>
           <div className="stat">
@@ -242,7 +242,7 @@ function NodePanel(props: SidebarProps) {
           </div>
         </div>
 
-        {node.c.notes && <p className="hint" style={{ marginTop: 0 }}>{node.c.notes}</p>}
+        {node.space.notes && <p className="hint" style={{ marginTop: 0 }}>{node.space.notes}</p>}
 
         <div className="row-actions">
           {justSelected && (
@@ -251,21 +251,21 @@ function NodePanel(props: SidebarProps) {
           <button className={justSelected ? 'btn' : 'btn primary'} onClick={() => onAddChild(node)}>
             + Add
           </button>
-          {!isWorld && <button className="btn" onClick={() => onEditContainer(node)}>Edit</button>}
+          {!isRoot && <button className="btn" onClick={() => onEditSpace(node)}>Edit</button>}
           <button
             className="btn"
             onClick={() => props.onMakeLabels(node)}
-            title={`Labels for ${node.c.name}, or for everything inside it`}
+            title={`Labels for ${node.space.name}, or for everything inside it`}
           >
             🏷 Labels
           </button>
-          {!isWorld && (
-            <button className="btn danger" onClick={() => onDeleteContainer(node)}>Delete</button>
+          {!isRoot && (
+            <button className="btn danger" onClick={() => onDeleteSpace(node)}>Delete</button>
           )}
         </div>
       </div>
 
-      {!isWorld && <AddStock node={node} onAddStock={props.onAddStock} />}
+      {!isRoot && <AddHolding node={node} onAddHolding={props.onAddHolding} />}
 
       {node.children.length > 0 && (
         <div className="panel-section">
@@ -276,12 +276,12 @@ function NodePanel(props: SidebarProps) {
           </div>
           <div className="item-list">
             {node.children.map((child) => (
-              <div key={child.c.id} className="item" onClick={() => onOpen(child)}>
-                <span className="name">{child.c.name}</span>
+              <div key={child.space.id} className="item" onClick={() => onOpen(child)}>
+                <span className="name">{child.space.name}</span>
                 <span className="where">
-                  {cellAddress(node.c, child.c) ?? ''} {size(child.c)}
+                  {cellAddress(node.space, child.space) ?? ''} {size(child.space)}
                 </span>
-                <span className="qty">{child.totalItems || ''}</span>
+                <span className="qty">{child.totalHoldings || ''}</span>
               </div>
             ))}
           </div>
@@ -290,27 +290,27 @@ function NodePanel(props: SidebarProps) {
 
       {isLocation && <RoomEditor {...props} />}
 
-      {node.items.length > 0 && (
+      {node.holdings.length > 0 && (
         <div className="panel-section">
           <div className="panel-title">
             <span>Items here</span>
             <span className="spacer" />
-            <span className="badge">{node.items.length}</span>
+            <span className="badge">{node.holdings.length}</span>
           </div>
           {loose.length > 0 && (
             <p className="hint" style={{ marginTop: 0, marginBottom: 8, color: 'var(--danger)' }}>
               {loose.length} {loose.length === 1 ? 'item has' : 'items have'} no room on the{' '}
-              {node.c.cols} × {node.c.rows} grid, so {loose.length === 1 ? 'it is' : 'they are'} only
+              {node.space.cols} × {node.space.rows} grid, so {loose.length === 1 ? 'it is' : 'they are'} only
               listed. Make the grid bigger with <b>Edit</b>.
             </p>
           )}
           <div className="item-list">
-            {node.items.map((item) => (
-              <ItemRow
-                key={item.stock.id}
-                item={item}
+            {node.holdings.map((holding) => (
+              <HoldingLine
+                key={holding.row.id}
+                holding={holding}
                 holder={node}
-                onClick={() => onSelectItem(item, node)}
+                onClick={() => onSelectHolding(holding, node)}
                 onSetQty={props.onSetQty}
               />
             ))}
@@ -328,16 +328,16 @@ function NodePanel(props: SidebarProps) {
  * clamped.
  */
 function RoomEditor({ onSaveLocation, node }: SidebarProps) {
-  const [draft, setDraft] = useState<Partial<Container>>({});
+  const [draft, setDraft] = useState<Partial<Space>>({});
   // A fresh location resets the form — otherwise a half-typed name would follow
   // you from one room to the next.
-  useEffect(() => setDraft({}), [node.c.id]);
-  const value = <K extends keyof Container>(key: K): Container[K] =>
-    (draft[key] as Container[K]) ?? node.c[key];
+  useEffect(() => setDraft({}), [node.space.id]);
+  const value = <K extends keyof Space>(key: K): Space[K] =>
+    (draft[key] as Space[K]) ?? node.space[key];
   const dirty = Object.keys(draft).length > 0;
 
   const overflowing = node.children.filter(
-    (c) => c.c.x + c.c.w > Number(value('cols')) || c.c.y + c.c.h > Number(value('rows'))
+    (c) => c.space.x + c.space.w > Number(value('cols')) || c.space.y + c.space.h > Number(value('rows'))
   );
 
   return (
@@ -383,7 +383,7 @@ function RoomEditor({ onSaveLocation, node }: SidebarProps) {
 
       {overflowing.length > 0 && (
         <p className="hint" style={{ color: 'var(--danger)' }}>
-          {overflowing.map((c) => c.c.name).join(', ')} would fall outside a grid that size.
+          {overflowing.map((c) => c.space.name).join(', ')} would fall outside a grid that size.
         </p>
       )}
 
@@ -404,27 +404,27 @@ function RoomEditor({ onSaveLocation, node }: SidebarProps) {
   );
 }
 
-function ItemRow({
-  item,
+function HoldingLine({
+  holding,
   holder,
   onClick,
   onSetQty,
 }: {
-  item: Item;
+  holding: Holding;
   holder: Node;
   onClick: () => void;
-  onSetQty: (stockId: number, qty: number) => void;
+  onSetQty: (holdingId: number, qty: number) => void;
 }) {
-  const low = item.part.min_qty != null && item.stock.qty < item.part.min_qty;
-  const slot = slotOf(item);
+  const low = holding.item.min_qty != null && holding.row.qty < holding.item.min_qty;
+  const slot = slotOf(holding);
   return (
     <div className="item" onClick={onClick}>
-      <span className="name">{item.part.name}</span>
+      <span className="name">{holding.item.name}</span>
       <span
         className="where"
         title={
           slot
-            ? `Slot ${cellAddress(holder.c, { ...holder.c, ...slot }) ?? ''} · ${size(slot)} U`
+            ? `Slot ${cellAddress(holder.space, { ...holder.space, ...slot }) ?? ''} · ${size(slot)} U`
             : 'No room on the grid — only listed'
         }
       >
@@ -435,18 +435,18 @@ function ItemRow({
         title="One fewer"
         onClick={(e) => {
           e.stopPropagation();
-          onSetQty(item.stock.id, Math.max(0, item.stock.qty - 1));
+          onSetQty(holding.row.id, Math.max(0, holding.row.qty - 1));
         }}
       >
         −
       </button>
-      <span className={low ? 'qty low' : 'qty'}>{fmtQty(item.stock.qty)}</span>
+      <span className={low ? 'qty low' : 'qty'}>{fmtQty(holding.row.qty)}</span>
       <button
         className="btn ghost"
         title="One more"
         onClick={(e) => {
           e.stopPropagation();
-          onSetQty(item.stock.id, item.stock.qty + 1);
+          onSetQty(holding.row.id, holding.row.qty + 1);
         }}
       >
         +
@@ -455,12 +455,12 @@ function ItemRow({
   );
 }
 
-function AddStock({
+function AddHolding({
   node,
-  onAddStock,
+  onAddHolding,
 }: {
   node: Node;
-  onAddStock: SidebarProps['onAddStock'];
+  onAddHolding: SidebarProps['onAddHolding'];
 }) {
   const [name, setName] = useState('');
   const [qty, setQty] = useState('1');
@@ -468,7 +468,7 @@ function AddStock({
   const submit = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    onAddStock(node.c.id, trimmed, Number(qty) || 0);
+    onAddHolding(node.space.id, trimmed, Number(qty) || 0);
     setName('');
     setQty('1');
   };
@@ -483,7 +483,7 @@ function AddStock({
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submit()}
-          list={PART_NAME_LIST}
+          list={ITEM_NAME_LIST}
           autoComplete="off"
         />
         <input
@@ -496,15 +496,15 @@ function AddStock({
         <button className="btn primary" onClick={submit}>Add</button>
       </div>
       <p className="hint">
-        An existing part of the same name is reused, so the same resistor can live in two drawers.
+        An existing item of the same name is reused, so the same resistor can live in two drawers.
       </p>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------- part */
+/* ------------------------------------------------------------------- item */
 
-const PART_FIELDS: { key: keyof Part; label: string }[] = [
+const ITEM_FIELDS: { key: keyof Item; label: string }[] = [
   { key: 'description', label: 'Description' },
   { key: 'part_number', label: 'Part number' },
   { key: 'manufacturer', label: 'Manufacturer' },
@@ -515,24 +515,24 @@ const PART_FIELDS: { key: keyof Part; label: string }[] = [
   { key: 'datasheet_url', label: 'Datasheet URL' },
 ];
 
-function PartPanel(props: SidebarProps & { item: Item }) {
-  const { item, tree, onSelectItem, onSavePart, onRemoveStock, onSetQty, onOpen, node } = props;
-  const [draft, setDraft] = useState<Partial<Part>>({});
+function ItemPanel(props: SidebarProps & { holding: Holding }) {
+  const { holding, tree, onSelectHolding, onSaveItem, onRemoveHolding, onSetQty, onOpen, node } = props;
+  const [draft, setDraft] = useState<Partial<Item>>({});
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     setDraft({});
     setOpen(false);
-  }, [item.part.id]);
+  }, [holding.item.id]);
 
-  const value = (key: keyof Part) => (draft[key] as string | undefined) ?? (item.part[key] as string | null) ?? '';
-  const set = (key: keyof Part, v: string) => setDraft((d) => ({ ...d, [key]: v }));
+  const value = (key: keyof Item) => (draft[key] as string | undefined) ?? (holding.item[key] as string | null) ?? '';
+  const set = (key: keyof Item, v: string) => setDraft((d) => ({ ...d, [key]: v }));
   const dirty = Object.keys(draft).length > 0;
 
-  // Everywhere else this same part is stocked.
+  // Everywhere else this same item is held.
   const elsewhere = tree.flat
-    .flatMap((n) => n.items.map((it) => ({ n, it })))
-    .filter(({ it }) => it.part.id === item.part.id && it.stock.id !== item.stock.id);
+    .flatMap((n) => n.holdings.map((it) => ({ n, it })))
+    .filter(({ it }) => it.item.id === holding.item.id && it.row.id !== holding.row.id);
 
   return (
     <>
@@ -540,7 +540,7 @@ function PartPanel(props: SidebarProps & { item: Item }) {
         <div className="panel-title">
           <span>Item</span>
           <span className="spacer" />
-          <button className="btn ghost" onClick={() => onSelectItem(null, node)}>← Back</button>
+          <button className="btn ghost" onClick={() => onSelectHolding(null, node)}>← Back</button>
         </div>
 
         <div className="field">
@@ -553,8 +553,8 @@ function PartPanel(props: SidebarProps & { item: Item }) {
             <label>Quantity</label>
             <input
               type="number"
-              value={item.stock.qty}
-              onChange={(e) => onSetQty(item.stock.id, Number(e.target.value) || 0)}
+              value={holding.row.qty}
+              onChange={(e) => onSetQty(holding.row.id, Number(e.target.value) || 0)}
             />
           </div>
           <div className="field">
@@ -565,7 +565,7 @@ function PartPanel(props: SidebarProps & { item: Item }) {
             <label>Min</label>
             <input
               type="number"
-              value={(draft.min_qty as number | undefined) ?? item.part.min_qty ?? ''}
+              value={(draft.min_qty as number | undefined) ?? holding.item.min_qty ?? ''}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, min_qty: e.target.value === '' ? null : Number(e.target.value) }))
               }
@@ -574,7 +574,7 @@ function PartPanel(props: SidebarProps & { item: Item }) {
         </div>
 
         {open &&
-          PART_FIELDS.map((f) => (
+          ITEM_FIELDS.map((f) => (
             <div className="field" key={f.key}>
               <label>{f.label}</label>
               <input value={value(f.key)} onChange={(e) => set(f.key, e.target.value)} />
@@ -586,7 +586,7 @@ function PartPanel(props: SidebarProps & { item: Item }) {
             className="btn primary"
             disabled={!dirty}
             onClick={() => {
-              onSavePart(item.part.id, draft);
+              onSaveItem(holding.item.id, draft);
               setDraft({});
             }}
           >
@@ -598,7 +598,7 @@ function PartPanel(props: SidebarProps & { item: Item }) {
           <button
             className="btn danger"
             title="Take it out of this space. The item stays in the catalogue."
-            onClick={() => onRemoveStock(item.stock.id)}
+            onClick={() => onRemoveHolding(holding.row.id)}
           >
             Remove from here
           </button>
@@ -609,12 +609,12 @@ function PartPanel(props: SidebarProps & { item: Item }) {
               const where = elsewhere.length + 1;
               const message =
                 where > 1
-                  ? `Delete "${item.part.name}" from all ${where} spaces, and forget it entirely?`
-                  : `Delete "${item.part.name}" entirely?`;
-              if (confirm(message)) props.onDeletePart(item.part.id);
+                  ? `Delete "${holding.item.name}" from all ${where} spaces, and forget it entirely?`
+                  : `Delete "${holding.item.name}" entirely?`;
+              if (confirm(message)) props.onDeleteItem(holding.item.id);
             }}
           >
-            Delete part
+            Delete item
           </button>
         </div>
       </div>
@@ -624,29 +624,29 @@ function PartPanel(props: SidebarProps & { item: Item }) {
         <div className="item-list">
           <div className="item on">
             <span className="name">{pathLabel(node)}</span>
-            <span className="qty">{fmtQty(item.stock.qty)}</span>
+            <span className="qty">{fmtQty(holding.row.qty)}</span>
           </div>
           {elsewhere.map(({ n, it }) => (
-            <div key={it.stock.id} className="item" onClick={() => { onOpen(n); onSelectItem(it, n); }}>
+            <div key={it.row.id} className="item" onClick={() => { onOpen(n); onSelectHolding(it, n); }}>
               <span className="name">{pathLabel(n)}</span>
-              <span className="qty">{fmtQty(it.stock.qty)}</span>
+              <span className="qty">{fmtQty(it.row.qty)}</span>
             </div>
           ))}
         </div>
         <p className="hint" style={{ marginTop: 8 }}>
           Total across all locations:{' '}
-          {fmtQty(item.stock.qty + elsewhere.reduce((s, e) => s + e.it.stock.qty, 0))} {item.part.unit}
+          {fmtQty(holding.row.qty + elsewhere.reduce((s, e) => s + e.it.row.qty, 0))} {holding.item.unit}
         </p>
       </div>
 
-      <MoveStock {...props} />
+      <MoveHolding {...props} />
     </>
   );
 }
 
-function MoveStock({ tree, item, onMoveStock }: SidebarProps & { item: Item }) {
+function MoveHolding({ tree, holding, onMoveHolding }: SidebarProps & { holding: Holding }) {
   const [target, setTarget] = useState('');
-  const options = tree.flat.filter((n) => n.c.id !== item.stock.container_id);
+  const options = tree.flat.filter((n) => n.space.id !== holding.row.space_id);
 
   return (
     <div className="panel-section">
@@ -667,7 +667,7 @@ function MoveStock({ tree, item, onMoveStock }: SidebarProps & { item: Item }) {
         >
           <option value="">Choose a space…</option>
           {options.map((n) => (
-            <option key={n.c.id} value={n.c.id}>
+            <option key={n.space.id} value={n.space.id}>
               {pathLabel(n)}
             </option>
           ))}
@@ -676,7 +676,7 @@ function MoveStock({ tree, item, onMoveStock }: SidebarProps & { item: Item }) {
           className="btn"
           disabled={!target}
           onClick={() => {
-            onMoveStock(item.stock.id, Number(target));
+            onMoveHolding(holding.row.id, Number(target));
             setTarget('');
           }}
         >

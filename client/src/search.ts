@@ -1,18 +1,18 @@
-import type { Item, Node } from './types';
+import type { Holding, Node } from './types';
 import type { Tree } from './tree';
 
 export interface Hit {
   score: number;
   node: Node;
-  item?: Item;
+  holding?: Holding;
 }
 
 export interface SearchResult {
   hits: Hit[];
-  /** Container ids that matched, or that hold a matching part. */
+  /** Space ids that matched, or that hold a matching item. */
   matched: Set<number>;
-  /** Stock row ids whose part matched. */
-  matchedStock: Set<number>;
+  /** Holding row ids whose item matched. */
+  matchedHoldings: Set<number>;
   /** Ancestors of matches, so collapsed branches can show a trail. */
   onPath: Set<number>;
 }
@@ -20,14 +20,14 @@ export interface SearchResult {
 export const emptySearch: SearchResult = {
   hits: [],
   matched: new Set(),
-  matchedStock: new Set(),
+  matchedHoldings: new Set(),
   onPath: new Set(),
 };
 
 /**
  * Token-AND matching: every whitespace-separated token must appear somewhere in
  * the haystack. That handles `470 resistor` and `esp32 mini` the way you'd
- * expect while staying predictable — no fuzzy near-misses on a parts list where
+ * expect while staying predictable — no fuzzy near-misses on an inventory where
  * `10K` and `100K` are different things.
  */
 function scoreText(haystack: string, tokens: string[]): number {
@@ -48,31 +48,31 @@ export function search(tree: Tree, query: string): SearchResult {
 
   const hits: Hit[] = [];
   const matched = new Set<number>();
-  const matchedStock = new Set<number>();
+  const matchedHoldings = new Set<number>();
 
   for (const node of tree.flat) {
-    const containerScore = scoreText(
-      [node.c.name, node.type?.name ?? '', node.c.notes ?? ''].join(' '),
+    const spaceScore = scoreText(
+      [node.space.name, node.type?.name ?? '', node.space.notes ?? ''].join(' '),
       tokens
     );
-    if (containerScore > 0) {
-      hits.push({ score: containerScore + 1, node });
-      matched.add(node.c.id);
+    if (spaceScore > 0) {
+      hits.push({ score: spaceScore + 1, node });
+      matched.add(node.space.id);
     }
 
-    for (const item of node.items) {
-      const p = item.part;
+    for (const holding of node.holdings) {
+      const item = holding.item;
       const haystack = [
-        p.name, p.description, p.part_number, p.manufacturer,
-        p.category, p.tags, p.package, p.value, p.notes, item.stock.note,
+        item.name, item.description, item.part_number, item.manufacturer,
+        item.category, item.tags, item.package, item.value, item.notes, holding.row.note,
       ]
         .filter(Boolean)
         .join(' ');
       const itemScore = scoreText(haystack, tokens);
       if (itemScore > 0) {
-        hits.push({ score: itemScore, node, item });
-        matched.add(node.c.id);
-        matchedStock.add(item.stock.id);
+        hits.push({ score: itemScore, node, holding });
+        matched.add(node.space.id);
+        matchedHoldings.add(holding.row.id);
       }
     }
   }
@@ -81,7 +81,7 @@ export function search(tree: Tree, query: string): SearchResult {
   for (const id of matched) {
     let cursor = tree.byId.get(id)?.parent ?? null;
     while (cursor) {
-      onPath.add(cursor.c.id);
+      onPath.add(cursor.space.id);
       cursor = cursor.parent;
     }
   }
@@ -89,12 +89,12 @@ export function search(tree: Tree, query: string): SearchResult {
   hits.sort(
     (a, b) =>
       b.score - a.score ||
-      (a.item?.part.name ?? a.node.c.name).localeCompare(
-        b.item?.part.name ?? b.node.c.name,
+      (a.holding?.item.name ?? a.node.space.name).localeCompare(
+        b.holding?.item.name ?? b.node.space.name,
         undefined,
         { numeric: true }
       )
   );
 
-  return { hits, matched, matchedStock, onPath };
+  return { hits, matched, matchedHoldings, onPath };
 }

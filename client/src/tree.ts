@@ -1,27 +1,29 @@
-import { WORLD_ID, type Container, type Node, type State } from './types';
+import { ROOT_ID, type Node, type Space, type State } from './types';
 
 export interface Tree {
-  world: Node;
+  /** The synthetic node above the locations. */
+  rootSpace: Node;
+  /** The locations: every space with nothing above it. */
   roots: Node[];
   byId: Map<number, Node>;
   /** Every real node, parents before children. */
   flat: Node[];
 }
 
-/** Present the workspace row as a container so every level is handled alike. */
-const worldContainer = (state: State): Container => ({
-  id: WORLD_ID,
+/** Present the root row as a space so every level is handled alike. */
+const rootAsSpace = (state: State): Space => ({
+  id: ROOT_ID,
   parent_id: null,
   type_id: null,
-  name: state.workspace?.name ?? 'Workshop',
+  name: state.rootSpace?.name ?? 'Workshop',
   x: 0,
   y: 0,
   w: 1,
   h: 1,
-  layout: state.workspace?.layout ?? 'grid',
-  cols: state.workspace?.cols ?? 24,
-  rows: state.workspace?.rows ?? 16,
-  row_origin: state.workspace?.row_origin ?? 'top',
+  layout: state.rootSpace?.layout ?? 'grid',
+  cols: state.rootSpace?.cols ?? 24,
+  rows: state.rootSpace?.rows ?? 16,
+  row_origin: state.rootSpace?.row_origin ?? 'top',
   color: null,
   notes: null,
   sort: 0,
@@ -35,33 +37,33 @@ const worldContainer = (state: State): Container => ({
  */
 export function buildTree(state: State): Tree {
   const byId = new Map<number, Node>();
-  const partsById = new Map(state.parts.map((p) => [p.id, p]));
+  const itemsById = new Map(state.items.map((i) => [i.id, i]));
   const typesById = new Map(state.types.map((t) => [t.id, t]));
 
-  for (const c of state.containers) {
-    byId.set(c.id, {
-      c,
-      type: c.type_id != null ? typesById.get(c.type_id) ?? null : null,
+  for (const space of state.spaces) {
+    byId.set(space.id, {
+      space,
+      type: space.type_id != null ? typesById.get(space.type_id) ?? null : null,
       children: [],
       parent: null,
       depth: 0,
-      items: [],
-      totalItems: 0,
+      holdings: [],
+      totalHoldings: 0,
       totalQty: 0,
-      totalContainers: 0,
+      totalSpaces: 0,
       path: [],
     });
   }
 
-  for (const s of state.stock) {
-    const node = byId.get(s.container_id);
-    const part = partsById.get(s.part_id);
-    if (node && part) node.items.push({ stock: s, part });
+  for (const row of state.holdings) {
+    const node = byId.get(row.space_id);
+    const item = itemsById.get(row.item_id);
+    if (node && item) node.holdings.push({ row, item });
   }
 
   const roots: Node[] = [];
   for (const node of byId.values()) {
-    const parent = node.c.parent_id != null ? byId.get(node.c.parent_id) : undefined;
+    const parent = node.space.parent_id != null ? byId.get(node.space.parent_id) : undefined;
     if (parent) {
       node.parent = parent;
       parent.children.push(node);
@@ -71,48 +73,53 @@ export function buildTree(state: State): Tree {
   }
 
   const bySort = (a: Node, b: Node) =>
-    a.c.sort - b.c.sort || a.c.y - b.c.y || a.c.x - b.c.x || a.c.id - b.c.id;
+    a.space.sort - b.space.sort ||
+    a.space.y - b.space.y ||
+    a.space.x - b.space.x ||
+    a.space.id - b.space.id;
   roots.sort(bySort);
   for (const node of byId.values()) {
     node.children.sort(bySort);
-    node.items.sort((a, b) => a.part.name.localeCompare(b.part.name, undefined, { numeric: true }));
+    node.holdings.sort((a, b) =>
+      a.item.name.localeCompare(b.item.name, undefined, { numeric: true })
+    );
   }
 
   // Depth, path and rolled-up totals in one post-order walk.
   const flat: Node[] = [];
-  const visit = (node: Node, depth: number, path: Container[]) => {
+  const visit = (node: Node, depth: number, path: Space[]) => {
     node.depth = depth;
-    node.path = [...path, node.c];
+    node.path = [...path, node.space];
     flat.push(node);
-    let items = node.items.length;
-    let qty = node.items.reduce((sum, it) => sum + it.stock.qty, 0);
-    let containers = node.children.length;
+    let holdings = node.holdings.length;
+    let qty = node.holdings.reduce((sum, held) => sum + held.row.qty, 0);
+    let spaces = node.children.length;
     for (const child of node.children) {
       visit(child, depth + 1, node.path);
-      items += child.totalItems;
+      holdings += child.totalHoldings;
       qty += child.totalQty;
-      containers += child.totalContainers;
+      spaces += child.totalSpaces;
     }
-    node.totalItems = items;
+    node.totalHoldings = holdings;
     node.totalQty = qty;
-    node.totalContainers = containers;
+    node.totalSpaces = spaces;
   };
   for (const root of roots) visit(root, 0, []);
 
-  // A synthetic node owning the real roots, so the top view is uniform.
-  const world: Node = {
-    c: worldContainer(state),
+  // A synthetic node owning the locations, so the top view is uniform.
+  const rootSpace: Node = {
+    space: rootAsSpace(state),
     type: null,
     children: roots,
     parent: null,
     depth: -1,
-    items: [],
-    totalItems: roots.reduce((s, r) => s + r.totalItems, 0),
+    holdings: [],
+    totalHoldings: roots.reduce((s, r) => s + r.totalHoldings, 0),
     totalQty: roots.reduce((s, r) => s + r.totalQty, 0),
-    totalContainers: roots.reduce((s, r) => s + r.totalContainers + 1, 0),
+    totalSpaces: roots.reduce((s, r) => s + r.totalSpaces + 1, 0),
     path: [],
   };
 
-  byId.set(WORLD_ID, world);
-  return { world, roots, byId, flat };
+  byId.set(ROOT_ID, rootSpace);
+  return { rootSpace, roots, byId, flat };
 }

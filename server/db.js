@@ -56,23 +56,108 @@ db.exec('PRAGMA wal_autocheckpoint = 64');
 export const all = (sql, ...params) => db.prepare(sql).all(...params);
 export const get = (sql, ...params) => db.prepare(sql).get(...params);
 
-dropLegacyContainers();
+dropLegacySpaces();
+// Before the schema, always. `CREATE TABLE IF NOT EXISTS` would otherwise make
+// a second, empty `spaces` alongside the populated `containers`, and every
+// query would then read the empty one.
+renameToSpaceVocabulary();
 db.exec(fs.readFileSync(path.join(here, 'schema.sql'), 'utf8'));
 addMissingColumns();
-seedStorageTypes();
-seedWorkspace();
+seedSpaceTypes();
+seedRootSpace();
 ensureLocation();
 
+/* ---------------------------------------------------------------- renaming */
+
 /**
- * The top level used to be a single implicit workshop: the `workspace` row
- * supplied a grid, and everything with no parent sat directly on it. Locations
- * make that explicit — the things with no parent are now *locations*, and the
- * spaces that used to be top-level live inside one.
+ * The tables were once named after the code's first guesses: `containers` for
+ * anywhere a thing goes, `parts` for the things (this started as an electronics
+ * inventory), `stock` for the join between them. The app has since settled on
+ * space / item / holding — the words the interface already used — so the
+ * storage matches the vocabulary.
+ *
+ * Detectable from the schema itself, so no marker row is needed: if
+ * `containers` is still there, this has not run.
+ */
+// Declarations, not `const` arrows: everything here is reached from the startup
+// sequence at the top of the file, which runs before a `const` in this module
+// scope is bound. Same reason the tables below are declared inside the function.
+function tableExists(name) {
+  return !!get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", name);
+}
+
+function rowCount(name) {
+  return Number(get(`SELECT COUNT(*) AS n FROM "${name}"`).n);
+}
+
+function renameToSpaceVocabulary() {
+  const TABLE_RENAMES = [
+    ['containers', 'spaces'],
+    ['parts', 'items'],
+    ['stock', 'holdings'],
+    ['storage_types', 'space_types'],
+    ['workspace', 'root_space'],
+  ];
+  // Applied after the table rename, so they are addressed by their new names.
+  const COLUMN_RENAMES = [
+    ['holdings', 'part_id', 'item_id'],
+    ['holdings', 'container_id', 'space_id'],
+  ];
+  // Named for tables that no longer exist; schema.sql makes the replacements.
+  const STALE_INDEXES = [
+    'idx_containers_parent',
+    'idx_parts_name',
+    'idx_stock_container',
+    'idx_stock_part',
+  ];
+
+  if (!TABLE_RENAMES.some(([from]) => tableExists(from))) return;
+
+  tx(() => {
+    for (const [from, to] of TABLE_RENAMES) {
+      if (!tableExists(from)) continue;
+      // An empty table under the new name means a build ran schema.sql before
+      // this migration existed. The real data is still in the old one, so the
+      // placeholder goes rather than blocking the rename.
+      if (tableExists(to)) {
+        if (rowCount(to) > 0) {
+          throw new Error(
+            `cannot rename ${from} to ${to}: both exist and ${to} already holds rows. ` +
+              'Move the database aside and restore from a backup.'
+          );
+        }
+        db.exec(`DROP TABLE "${to}"`);
+      }
+      // Renaming a table also rewrites the REFERENCES clauses that point at it,
+      // so the foreign keys survive without being rebuilt by hand.
+      db.exec(`ALTER TABLE "${from}" RENAME TO "${to}"`);
+    }
+
+    for (const [table, from, to] of COLUMN_RENAMES) {
+      if (!tableExists(table)) continue;
+      const columns = new Set(all(`PRAGMA table_info("${table}")`).map((c) => c.name));
+      if (!columns.has(from) || columns.has(to)) continue;
+      db.exec(`ALTER TABLE "${table}" RENAME COLUMN "${from}" TO "${to}"`);
+    }
+
+    for (const index of STALE_INDEXES) db.exec(`DROP INDEX IF EXISTS "${index}"`);
+  });
+
+  console.log('renamed containers/parts/stock to spaces/items/holdings');
+}
+
+/* -------------------------------------------------------------- locations */
+
+/**
+ * The top level used to be a single implicit workshop: the root row supplied a
+ * grid, and everything with no parent sat directly on it. Locations make that
+ * explicit — the things with no parent are now *locations*, and the spaces that
+ * used to be top-level live inside one.
  *
  * A database from before that has spaces at the top and no location to hold
- * them, so one is made and they move into it. The location inherits the
- * workspace grid as its own interior, which is the grid those spaces were
- * already positioned in, so every rectangle keeps the coordinates it had.
+ * them, so one is made and they move into it. The location inherits the root
+ * grid as its own interior, which is the grid those spaces were already
+ * positioned in, so every rectangle keeps the coordinates it had.
  *
  * Idempotent, and deliberately called from two places: at startup, and again
  * after an import. Restoring a backup taken before locations would otherwise
@@ -105,19 +190,19 @@ function needsLocation() {
 }
 
 function migrateToLocations() {
-  const ws = get('SELECT * FROM workspace WHERE id = 1') || {};
-  const name = ws.name || 'Workshop';
+  const rootSpace = get('SELECT * FROM root_space WHERE id = 1') || {};
+  const name = rootSpace.name || 'Workshop';
   const made = run(
-    `INSERT INTO containers (parent_id, type_id, name, x, y, w, h, layout, cols, rows, row_origin, sort)
+    `INSERT INTO spaces (parent_id, type_id, name, x, y, w, h, layout, cols, rows, row_origin, sort)
      VALUES (NULL, NULL, ?, 0, 0, 6, 5, ?, ?, ?, ?, 0)`,
     name,
-    ws.layout || 'grid',
-    ws.cols || 24,
-    ws.rows || 16,
-    ws.row_origin || 'top'
+    rootSpace.layout || 'grid',
+    rootSpace.cols || 24,
+    rootSpace.rows || 16,
+    rootSpace.row_origin || 'top'
   );
   const moved = run(
-    'UPDATE containers SET parent_id = ? WHERE parent_id IS NULL AND id <> ?',
+    'UPDATE spaces SET parent_id = ? WHERE parent_id IS NULL AND id <> ?',
     made.lastInsertRowid,
     made.lastInsertRowid
   );
@@ -136,7 +221,7 @@ function migrateToLocations() {
  */
 function addMissingColumns() {
   const wanted = {
-    stock: { x: 'REAL', y: 'REAL', w: 'REAL', h: 'REAL' },
+    holdings: { x: 'REAL', y: 'REAL', w: 'REAL', h: 'REAL' },
   };
   for (const [table, columns] of Object.entries(wanted)) {
     let existing;
@@ -154,59 +239,64 @@ function addMissingColumns() {
 }
 
 /**
- * Containers used to be measured in millimetres with per-cell dimensions. The
+ * Spaces used to be measured in millimetres with per-cell dimensions. The
  * unit-based schema has no faithful conversion for free-layout placements, so
  * an empty legacy table is simply replaced and a populated one is left alone
  * with instructions — better than silently mangling real data.
+ *
+ * Runs before the vocabulary rename, so the table is still called `containers`
+ * unless a later build already renamed it.
  */
-function dropLegacyContainers() {
+function dropLegacySpaces() {
+  const name = tableExists('containers') ? 'containers' : 'spaces';
   const table = get(
-    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'containers'"
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+    name
   );
   if (!table || !/\bcell_w\b/.test(table.sql)) return;
 
-  const { n } = get('SELECT COUNT(*) AS n FROM containers');
+  const { n } = get(`SELECT COUNT(*) AS n FROM "${name}"`);
   if (Number(n) > 0) {
     throw new Error(
-      `${dbPath} uses the old millimetre schema and still holds ${n} containers.\n` +
+      `${dbPath} uses the old millimetre schema and still holds ${n} spaces.\n` +
         'Export a backup from the previous version, move the file aside, and import it into a fresh database.'
     );
   }
-  db.exec('DROP TABLE containers');
-  console.log('replaced the empty millimetre-era containers table');
+  db.exec(`DROP TABLE "${name}"`);
+  console.log('replaced the empty millimetre-era spaces table');
 }
 
 /**
- * Create the single workspace row. Top-level containers used to be tiled
- * automatically, so their stored placement was meaningless — on the very first
- * run with a real workshop grid, spread them out so nothing starts stacked.
+ * Create the single root row. Top-level spaces used to be tiled automatically,
+ * so their stored placement was meaningless — on the very first run with a real
+ * workshop grid, spread them out so nothing starts stacked.
  */
-function seedWorkspace() {
-  if (get('SELECT id FROM workspace WHERE id = 1')) return;
+function seedRootSpace() {
+  if (get('SELECT id FROM root_space WHERE id = 1')) return;
 
   const cols = 24;
-  run('INSERT INTO workspace (id, cols, rows) VALUES (1, ?, 16)', cols);
+  run('INSERT INTO root_space (id, cols, rows) VALUES (1, ?, 16)', cols);
 
-  const roots = all('SELECT id FROM containers WHERE parent_id IS NULL ORDER BY sort, id');
+  const roots = all('SELECT id FROM spaces WHERE parent_id IS NULL ORDER BY sort, id');
   const w = 6;
   const h = 8;
   const perRow = Math.max(1, Math.floor(cols / w));
-  roots.forEach((root, i) => {
+  roots.forEach((topLevel, i) => {
     run(
-      'UPDATE containers SET x = ?, y = ?, w = ?, h = ? WHERE id = ?',
+      'UPDATE spaces SET x = ?, y = ?, w = ?, h = ? WHERE id = ?',
       (i % perRow) * w,
       Math.floor(i / perRow) * h,
       w,
       h,
-      root.id
+      topLevel.id
     );
   });
-  if (roots.length) console.log(`placed ${roots.length} top-level container(s) on the new workshop grid`);
+  if (roots.length) console.log(`placed ${roots.length} top-level space(s) on the new workshop grid`);
 }
 
 /** A deliberately short starter list — types are meant to be yours. */
-function seedStorageTypes() {
-  const { n } = get('SELECT COUNT(*) AS n FROM storage_types');
+function seedSpaceTypes() {
+  const { n } = get('SELECT COUNT(*) AS n FROM space_types');
   if (Number(n) > 0) return;
 
   // Spread across the palette rather than six browns a shade apart, which is
@@ -221,7 +311,7 @@ function seedStorageTypes() {
     ['Box',         'free', 4,  4,  '#a07a4a'],
   ];
   const stmt = db.prepare(
-    'INSERT INTO storage_types (name, layout, cols, rows, color, sort) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO space_types (name, layout, cols, rows, color, sort) VALUES (?, ?, ?, ?, ?, ?)'
   );
   starters.forEach((row, i) => stmt.run(...row, i));
 }

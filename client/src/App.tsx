@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { buildTree } from './tree';
 import { emptySearch, search as runSearch } from './search';
-import { ContainerDialog } from './components/ContainerDialog';
+import { SpaceDialog } from './components/SpaceDialog';
 import { Sidebar } from './components/Sidebar';
 import { TreePanel } from './components/TreePanel';
 import { SpaceView, fmtQty } from './components/SpaceView';
@@ -10,7 +10,7 @@ import { TypeManager } from './components/TypeManager';
 import { SettingsDialog } from './components/SettingsDialog';
 import { LabelDialog } from './components/LabelDialog';
 import { PrinterDialog } from './components/PrinterDialog';
-import { PartNames } from './components/PartNames';
+import { ItemNames } from './components/ItemNames';
 import { Walkthrough, hasSeenWalkthrough, markWalkthroughSeen } from './components/Walkthrough';
 import { MobileMenu } from './components/MobileMenu';
 import { LocationMenu } from './components/LocationMenu';
@@ -18,16 +18,16 @@ import { NameDialog } from './components/NameDialog';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { useAnyTouch, usePhone, useTouch } from './mobile';
 import {
-  WORLD_ID,
-  type Container,
-  type Item,
+  ROOT_ID,
+  type Space,
+  type Holding,
   type Node,
-  type Part,
+  type Item,
   type SizeMode,
   type State,
-  type StorageType,
+  type SpaceType,
   type UnitRect,
-  type Workspace,
+  type RootSpace,
 } from './types';
 
 const MODES: { id: SizeMode; label: string; title: string }[] = [
@@ -37,7 +37,7 @@ const MODES: { id: SizeMode; label: string; title: string }[] = [
 ];
 
 /** Only used for the instant before the first fetch lands. */
-const BLANK_WORKSPACE: Workspace = {
+const BLANK_ROOT_SPACE: RootSpace = {
   id: 1,
   name: 'Workshop',
   layout: 'grid',
@@ -56,11 +56,11 @@ export default function App() {
   const [state, setState] = useState<State | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Where you are standing, and what you are looking at, are separate: a single
-  // click inspects a container, only a double click walks into it.
-  const [rootId, setRootId] = useState<number>(WORLD_ID);
+  // click inspects a space, only a double click walks into it.
+  const [rootId, setRootId] = useState<number>(ROOT_ID);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [selectedStockId, setSelectedStockId] = useState<number | null>(null);
-  /** A displaced part — one with no location at all — picked from the tree. */
+  const [selectedHoldingId, setSelectedHoldingId] = useState<number | null>(null);
+  /** A displaced item — one with no location at all — picked from the tree. */
   const [displacedId, setDisplacedId] = useState<number | null>(null);
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<SizeMode>('physical');
@@ -68,7 +68,7 @@ export default function App() {
   const [typesOpen, setTypesOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(() => !hasSeenWalkthrough());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  /** Which container the label dialog is making labels for. */
+  /** Which space the label dialog is making labels for. */
   const [labelsFor, setLabelsFor] = useState<number | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
   /** A one-field 'what shall it be called' dialog, in the app rather than the browser. */
@@ -151,13 +151,13 @@ export default function App() {
     if (deepLinked.current || !state) return;
     const target = Number(new URLSearchParams(window.location.search).get('go'));
     deepLinked.current = true;
-    const landing = target && state.containers.some((c) => c.id === target) ? target : WORLD_ID;
-    if (landing !== WORLD_ID) setRootId(landing);
+    const landing = target && state.spaces.some((c) => c.id === target) ? target : ROOT_ID;
+    if (landing !== ROOT_ID) setRootId(landing);
     window.history.replaceState({ rootId: landing }, '', window.location.pathname);
   }, [state]);
 
   /**
-   * Going into a container is navigation, so the browser's Back button should
+   * Going into a space is navigation, so the browser's Back button should
    * step back out of it rather than leaving the app — especially on a phone,
    * where Back is the system gesture.
    */
@@ -165,9 +165,9 @@ export default function App() {
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
       fromHistory.current = true;
-      setRootId(Number(e.state?.rootId ?? WORLD_ID));
+      setRootId(Number(e.state?.rootId ?? ROOT_ID));
       setSelectedId(null);
-      setSelectedStockId(null);
+      setSelectedHoldingId(null);
       setDisplacedId(null);
     };
     window.addEventListener('popstate', onPop);
@@ -189,9 +189,9 @@ export default function App() {
   // old peek state so costly.
   useEffect(() => {
     if (!phone) return;
-    const anything = selectedId != null || selectedStockId != null || displacedId != null;
+    const anything = selectedId != null || selectedHoldingId != null || displacedId != null;
     if (!anything) setSheet('bar');
-  }, [phone, selectedId, selectedStockId, displacedId]);
+  }, [phone, selectedId, selectedHoldingId, displacedId]);
 
   // Any mutation just refetches: the dataset is small and this keeps the tree,
   // the aggregates and the view trivially consistent.
@@ -208,10 +208,10 @@ export default function App() {
   );
 
   const tree = useMemo(
-    () => buildTree(state ?? { workspace: BLANK_WORKSPACE, types: [], containers: [], parts: [], stock: [] }),
+    () => buildTree(state ?? { rootSpace: BLANK_ROOT_SPACE, types: [], spaces: [], items: [], holdings: [] }),
     [state]
   );
-  const world = tree.world;
+  const rootSpace = tree.rootSpace;
   const types = state?.types ?? [];
 
   /**
@@ -220,12 +220,12 @@ export default function App() {
    * switcher rather than by navigating — there is no floor plan of the world,
    * and pretending there is would put a level in the way of every trip.
    */
-  const locations = world.children;
+  const locations = rootSpace.children;
   // Never stand on the synthetic root. If nothing sensible is selected — first
   // load, or the location you were in has been deleted — fall into the first.
   const standingOn = tree.byId.get(rootId);
   const root =
-    standingOn && standingOn.c.id !== WORLD_ID ? standingOn : locations[0] ?? world;
+    standingOn && standingOn.space.id !== ROOT_ID ? standingOn : locations[0] ?? rootSpace;
   /** The location the current level belongs to, for the switcher's label. */
   const location = root.path.length ? tree.byId.get(root.path[0].id) ?? root : root;
 
@@ -235,21 +235,21 @@ export default function App() {
     [tree, query, searching]
   );
 
-  /** Catalogue entries stocked nowhere at all — the "Displaced" branch. */
+  /** Catalogue entries held nowhere at all — the "Displaced" branch. */
   const displaced = useMemo(() => {
-    const stocked = new Set(state?.stock.map((s) => s.part_id));
-    return (state?.parts ?? []).filter((p) => !stocked.has(p.id));
+    const held = new Set(state?.holdings.map((s) => s.item_id));
+    return (state?.items ?? []).filter((p) => !held.has(p.id));
   }, [state]);
 
-  // A displaced part that gets put back, or forgotten, stops being displaced.
-  const displacedPart = displacedId != null ? displaced.find((p) => p.id === displacedId) ?? null : null;
+  // A displaced item that gets put back, or forgotten, stops being displaced.
+  const displacedItem = displacedId != null ? displaced.find((p) => p.id === displacedId) ?? null : null;
   useEffect(() => {
-    if (displacedId != null && !displacedPart) setDisplacedId(null);
-  }, [displacedId, displacedPart]);
+    if (displacedId != null && !displacedItem) setDisplacedId(null);
+  }, [displacedId, displacedItem]);
 
   const typeUsage = useMemo(() => {
     const counts = new Map<number, number>();
-    for (const c of state?.containers ?? []) {
+    for (const c of state?.spaces ?? []) {
       if (c.type_id != null) counts.set(c.type_id, (counts.get(c.type_id) ?? 0) + 1);
     }
     return counts;
@@ -259,43 +259,43 @@ export default function App() {
   const panelNode = (selectedId != null ? tree.byId.get(selectedId) : undefined) ?? root;
   const labelsNode = labelsFor != null ? tree.byId.get(labelsFor) ?? null : null;
 
-  const selected: Item | null = useMemo(() => {
-    if (selectedStockId == null) return null;
-    return panelNode.items.find((item) => item.stock.id === selectedStockId) ?? null;
-  }, [panelNode, selectedStockId]);
+  const selected: Holding | null = useMemo(() => {
+    if (selectedHoldingId == null) return null;
+    return panelNode.holdings.find((holding) => holding.row.id === selectedHoldingId) ?? null;
+  }, [panelNode, selectedHoldingId]);
 
   const select = useCallback((node: Node) => {
-    setSelectedId(node.c.id);
-    setSelectedStockId(null);
+    setSelectedId(node.space.id);
+    setSelectedHoldingId(null);
   }, []);
 
   const open = useCallback((node: Node) => {
-    setRootId(node.c.id);
+    setRootId(node.space.id);
     setSelectedId(null);
-    setSelectedStockId(null);
+    setSelectedHoldingId(null);
   }, []);
 
   /**
-   * Jump to something and point at it. A part: step into the container holding
-   * it. A container: stand in its parent, so you see it highlighted in context.
+   * Jump to something and point at it. An item: step into the space holding
+   * it. A space: stand in its parent, so you see it highlighted in context.
    */
   const reveal = useCallback(
-    (node: Node, item: Item | null) => {
-      const stage = item ? node : node.parent ?? tree.world;
-      setRootId(stage.c.id);
-      setSelectedId(node.c.id);
-      setSelectedStockId(item?.stock.id ?? null);
+    (node: Node, holding: Holding | null) => {
+      const stage = holding ? node : node.parent ?? tree.rootSpace;
+      setRootId(stage.space.id);
+      setSelectedId(node.space.id);
+      setSelectedHoldingId(holding?.row.id ?? null);
     },
     [tree]
   );
 
   const up = useCallback(() => {
     setSelectedId(null);
-    setSelectedStockId(null);
+    setSelectedHoldingId(null);
     // A location is the top of its own tree; above it is the switcher, not a
     // level, so Back stops here rather than surfacing on a synthetic root.
-    if (!root.parent || root.parent.c.id === WORLD_ID) return;
-    setRootId(root.parent.c.id);
+    if (!root.parent || root.parent.space.id === ROOT_ID) return;
+    setRootId(root.parent.space.id);
   }, [root]);
 
   const closeTour = useCallback(() => {
@@ -325,7 +325,7 @@ export default function App() {
         else if (settingsOpen) setSettingsOpen(false);
         else if (typesOpen) setTypesOpen(false);
         else if (dialog) setDialog(null);
-        else if (selectedStockId != null) setSelectedStockId(null);
+        else if (selectedHoldingId != null) setSelectedHoldingId(null);
         else if (selectedId != null) setSelectedId(null);
         else if (query) setQuery('');
         else (document.activeElement as HTMLElement | null)?.blur();
@@ -351,21 +351,21 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [
     dialog, typesOpen, tourOpen, settingsOpen, printerOpen, menuOpen, labelsFor, closeTour, query,
-    selectedStockId, selectedId, tree, open, up, settings.backspaceToGoBack,
+    selectedHoldingId, selectedId, tree, open, up, settings.backspaceToGoBack,
   ]);
 
   /* --------------------------------------------------------------- saving */
 
-  const saveContainer = (data: Partial<Container>) => {
+  const saveSpace = (data: Partial<Space>) => {
     const d = dialog;
     if (!d) return;
     setDialog(null);
     void act(async () => {
       if (d.existing) {
-        await api.updateContainer(d.existing.c.id, data);
+        await api.updateSpace(d.existing.space.id, data);
       } else {
-        const parentId = d.parent.c.id === WORLD_ID ? null : d.parent.c.id;
-        const created = await api.createContainer({ ...data, parent_id: parentId });
+        const parentId = d.parent.space.id === ROOT_ID ? null : d.parent.space.id;
+        const created = await api.createSpace({ ...data, parent_id: parentId });
         setRootId(created.id);
       }
     });
@@ -393,7 +393,7 @@ export default function App() {
 
   const makeLocation = (name: string) => {
     void act(async () => {
-      const made = await api.createContainer({
+      const made = await api.createSpace({
         parent_id: null,
         name,
         x: 0,
@@ -406,7 +406,7 @@ export default function App() {
         row_origin: 'top',
       });
       setSelectedId(null);
-      setSelectedStockId(null);
+      setSelectedHoldingId(null);
       setDisplacedId(null);
       setRootId(made.id);
     });
@@ -415,9 +415,9 @@ export default function App() {
   const renameLocation = (node: Node) => {
     setNaming({
       title: 'Rename location',
-      value: node.c.name,
+      value: node.space.name,
       onSave: (name) => {
-        if (name !== node.c.name) void act(() => api.updateContainer(node.c.id, { name }));
+        if (name !== node.space.name) void act(() => api.updateSpace(node.space.id, { name }));
       },
     });
   };
@@ -429,8 +429,8 @@ export default function App() {
   const drawChild = (parent: Node, rect: UnitRect, name: string, typeId: number | null) => {
     const type = types.find((t) => t.id === typeId);
     void act(() =>
-      api.createContainer({
-        parent_id: parent.c.id === WORLD_ID ? null : parent.c.id,
+      api.createSpace({
+        parent_id: parent.space.id === ROOT_ID ? null : parent.space.id,
         type_id: typeId,
         name,
         x: rect.x,
@@ -440,22 +440,22 @@ export default function App() {
         layout: type?.layout ?? 'free',
         cols: type?.cols ?? Math.max(1, Math.round(rect.w)),
         rows: type?.rows ?? Math.max(1, Math.round(rect.h)),
-        row_origin: parent.c.row_origin,
+        row_origin: parent.space.row_origin,
       })
     );
   };
 
-  const deleteContainer = (node: Node) => {
-    const inside = node.totalContainers + node.totalItems;
+  const deleteSpace = (node: Node) => {
+    const inside = node.totalSpaces + node.totalHoldings;
     const warning = inside
-      ? `Delete "${node.c.name}" and everything inside it (${node.totalContainers} spaces, ${node.totalItems} items)?`
-      : `Delete "${node.c.name}"?`;
+      ? `Delete "${node.space.name}" and everything inside it (${node.totalSpaces} spaces, ${node.totalHoldings} items)?`
+      : `Delete "${node.space.name}"?`;
     // Something with contents is always confirmed, whatever the setting says.
     if ((settings.confirmDelete || inside > 0) && !confirm(warning)) return;
-    const parentId = node.parent ? node.parent.c.id : WORLD_ID;
+    const parentId = node.parent ? node.parent.space.id : ROOT_ID;
     void act(async () => {
-      await api.deleteContainer(node.c.id);
-      if (rootId === node.c.id) setRootId(parentId);
+      await api.deleteSpace(node.space.id);
+      if (rootId === node.space.id) setRootId(parentId);
     });
   };
 
@@ -479,7 +479,7 @@ export default function App() {
     void act(async () => {
       const dump = JSON.parse(await file.text());
       await api.importAll(dump);
-      setRootId(WORLD_ID);
+      setRootId(ROOT_ID);
     });
   };
 
@@ -537,7 +537,7 @@ export default function App() {
             <button
               className="btn ghost"
               onClick={up}
-              disabled={root.c.id === WORLD_ID}
+              disabled={root.space.id === ROOT_ID}
               aria-label="Back"
             >
               ←
@@ -555,13 +555,13 @@ export default function App() {
                 the useful end: where you are, and the step above it. */}
             <nav className="crumbs">
               {crumbs.slice(1).slice(-2).map((node, i, shown) => (
-                <span key={node.c.id} style={{ display: 'contents' }}>
+                <span key={node.space.id} style={{ display: 'contents' }}>
                   <span className="crumb-sep">›</span>
                   <button
                     className={i === shown.length - 1 ? 'crumb current' : 'crumb'}
                     onClick={() => open(node)}
                   >
-                    {node.c.name}
+                    {node.space.name}
                   </button>
                 </span>
               ))}
@@ -605,11 +605,11 @@ export default function App() {
             <button
               className="btn back"
               onClick={up}
-              disabled={root.c.id === WORLD_ID}
+              disabled={root.space.id === ROOT_ID}
               title={
-                root.c.id === WORLD_ID
+                root.space.id === ROOT_ID
                   ? 'You are at the top'
-                  : `Back to ${root.parent?.c.name ?? 'Workshop'} — or click the space around this level, press Backspace, or right-click`
+                  : `Back to ${root.parent?.space.name ?? 'Workshop'} — or click the space around this level, press Backspace, or right-click`
               }
             >
               ← Back
@@ -625,13 +625,13 @@ export default function App() {
 
             <nav className="crumbs">
               {crumbs.slice(1).map((node, i, trail) => (
-                <span key={node.c.id} style={{ display: 'contents' }}>
+                <span key={node.space.id} style={{ display: 'contents' }}>
                   <span className="crumb-sep">›</span>
                   <button
                     className={i === trail.length - 1 ? 'crumb current' : 'crumb'}
                     onClick={() => open(node)}
                   >
-                    {node.c.name}
+                    {node.space.name}
                   </button>
                 </span>
               ))}
@@ -731,9 +731,9 @@ export default function App() {
           root={root}
           location={location}
           selectedId={selectedId}
-          selectedStockId={selectedStockId}
+          selectedHoldingId={selectedHoldingId}
           displaced={displaced}
-          selectedPartId={displacedId}
+          selectedItemId={displacedId}
           search={result}
           searching={searching}
           onOpen={(node) => {
@@ -743,25 +743,25 @@ export default function App() {
             // has to get out of the way to show you that you went there.
             setTreeOpen(false);
           }}
-          onReveal={(node, item) => {
+          onReveal={(node, holding) => {
             setDisplacedId(null);
-            reveal(node, item);
+            reveal(node, holding);
             setTreeOpen(false);
           }}
-          onSelectDisplaced={(part) => {
-            setDisplacedId(part.id);
+          onSelectDisplaced={(item) => {
+            setDisplacedId(item.id);
             setTreeOpen(false);
             openDetails();
           }}
           onClose={() => (phone ? setTreeOpen(false) : changeSettings({ showTree: false }))}
           onAskName={askName}
-          onRenameContainer={(node, name) => act(() => api.updateContainer(node.c.id, { name }))}
-          onDeleteContainer={deleteContainer}
+          onRenameSpace={(node, name) => act(() => api.updateSpace(node.space.id, { name }))}
+          onDeleteSpace={deleteSpace}
           onAddInside={(node) => setDialog({ parent: node })}
-          onMakeLabels={(node) => setLabelsFor(node.c.id)}
-          onRenamePart={(partId, name) => act(() => api.updatePart(partId, { name }))}
-          onRemoveStock={(stockId) => act(() => api.deleteStock(stockId))}
-          onDeletePart={(partId) => act(() => api.deletePart(partId))}
+          onMakeLabels={(node) => setLabelsFor(node.space.id)}
+          onRenameItem={(itemId, name) => act(() => api.updateItem(itemId, { name }))}
+          onRemoveHolding={(holdingId) => act(() => api.deleteHolding(holdingId))}
+          onDeleteItem={(itemId) => act(() => api.deleteItem(itemId))}
         />
       )}
 
@@ -771,8 +771,8 @@ export default function App() {
         mode={mode}
         search={result}
         searching={searching}
-        selectedStockId={selectedStockId}
-        selectedContainerId={selectedId}
+        selectedHoldingId={selectedHoldingId}
+        selectedSpaceId={selectedId}
         // Three levels of nesting on a 6-inch screen is a mosaic of specks.
         maxDepth={phone ? Math.min(settings.drawDepth, 2) : settings.drawDepth}
         showGrid={settings.showGrid}
@@ -787,32 +787,32 @@ export default function App() {
         rightClickToGoBack={settings.rightClickToGoBack && !touch}
         onSelect={select}
         onOpen={open}
-        onSelectItem={(item, holder) => {
-          setSelectedId(holder.c.id);
-          setSelectedStockId(item.stock.id);
+        onSelectHolding={(holding, holder) => {
+          setSelectedId(holder.space.id);
+          setSelectedHoldingId(holding.row.id);
           openDetails();
         }}
         onDrawChild={drawChild}
-        onDrawPart={(parent, rect, name, qty) =>
-          act(() => api.addStock({ container_id: parent.c.id, name, qty, ...rect }))
+        onDrawItem={(parent, rect, name, qty) =>
+          act(() => api.addHolding({ space_id: parent.space.id, name, qty, ...rect }))
         }
-        onPlaceChild={(node, rect) => act(() => api.updateContainer(node.c.id, rect))}
-        onPlaceItem={(item, rect) => act(() => api.updateStock(item.stock.id, rect))}
-        onMoveItemInto={(item, target) =>
+        onPlaceChild={(node, rect) => act(() => api.updateSpace(node.space.id, rect))}
+        onPlaceHolding={(holding, rect) => act(() => api.updateHolding(holding.row.id, rect))}
+        onMoveHoldingInto={(holding, target) =>
           // No slot given, so the server finds it a free cell over there.
-          act(() => api.updateStock(item.stock.id, { container_id: target.c.id }))
+          act(() => api.updateHolding(holding.row.id, { space_id: target.space.id }))
         }
-        onMoveContainerInto={(node, target) =>
+        onMoveSpaceInto={(node, target) =>
           act(() =>
-            api.updateContainer(node.c.id, {
-              parent_id: target.c.id === WORLD_ID ? null : target.c.id,
+            api.updateSpace(node.space.id, {
+              parent_id: target.space.id === ROOT_ID ? null : target.space.id,
             })
           )
         }
         onUp={up}
         onDeselect={() => {
           setSelectedId(null);
-          setSelectedStockId(null);
+          setSelectedHoldingId(null);
           setDisplacedId(null);
         }}
       />
@@ -834,7 +834,7 @@ export default function App() {
             // so the sheet would refuse to come back.
             setSheet('bar');
             setSelectedId(null);
-            setSelectedStockId(null);
+            setSelectedHoldingId(null);
             setDisplacedId(null);
           }}
           node={panelNode}
@@ -844,40 +844,40 @@ export default function App() {
           searching={searching}
           onReveal={reveal}
           onOpen={open}
-          onSelectItem={(item) => setSelectedStockId(item?.stock.id ?? null)}
+          onSelectHolding={(holding) => setSelectedHoldingId(holding?.row.id ?? null)}
           onAddChild={(parent) => setDialog({ parent })}
-          onEditContainer={(node) => setDialog({ parent: node.parent ?? world, existing: node })}
-          onMakeLabels={(node) => setLabelsFor(node.c.id)}
-          onDeleteContainer={deleteContainer}
-          onAddStock={(containerId, name, qty) =>
-            act(() => api.addStock({ container_id: containerId, name, qty }))
+          onEditSpace={(node) => setDialog({ parent: node.parent ?? rootSpace, existing: node })}
+          onMakeLabels={(node) => setLabelsFor(node.space.id)}
+          onDeleteSpace={deleteSpace}
+          onAddHolding={(spaceId, name, qty) =>
+            act(() => api.addHolding({ space_id: spaceId, name, qty }))
           }
-          onSetQty={(stockId, qty) => act(() => api.updateStock(stockId, { qty }))}
-          onRemoveStock={(stockId) => {
-            setSelectedStockId(null);
-            void act(() => api.deleteStock(stockId));
+          onSetQty={(holdingId, qty) => act(() => api.updateHolding(holdingId, { qty }))}
+          onRemoveHolding={(holdingId) => {
+            setSelectedHoldingId(null);
+            void act(() => api.deleteHolding(holdingId));
           }}
-          onSavePart={(partId, patch: Partial<Part>) => act(() => api.updatePart(partId, patch))}
-          onMoveStock={(stockId, containerId) => {
-            setSelectedStockId(null);
-            void act(() => api.updateStock(stockId, { container_id: containerId }));
+          onSaveItem={(itemId, patch: Partial<Item>) => act(() => api.updateItem(itemId, patch))}
+          onMoveHolding={(holdingId, spaceId) => {
+            setSelectedHoldingId(null);
+            void act(() => api.updateHolding(holdingId, { space_id: spaceId }));
           }}
-          displacedPart={displacedPart}
-          onPlaceDisplaced={(partId, containerId, qty) =>
+          displacedItem={displacedItem}
+          onPlaceDisplaced={(itemId, spaceId, qty) =>
             act(async () => {
-              const stock = await api.addStock({ container_id: containerId, part_id: partId, qty });
+              const holding = await api.addHolding({ space_id: spaceId, item_id: itemId, qty });
               // Go and look at where it landed, rather than leaving the panel empty.
               setDisplacedId(null);
-              setRootId(containerId);
-              setSelectedId(containerId);
-              setSelectedStockId(stock.id);
+              setRootId(spaceId);
+              setSelectedId(spaceId);
+              setSelectedHoldingId(holding.id);
             })
           }
           onDismissDisplaced={() => setDisplacedId(null)}
-          onDeletePart={(partId) => act(() => api.deletePart(partId))}
-          workspace={state.workspace}
-          onSaveWorkspace={(patch) => act(() => api.updateWorkspace(patch))}
-          onSaveLocation={(node, patch) => act(() => api.updateContainer(node.c.id, patch))}
+          onDeleteItem={(itemId) => act(() => api.deleteItem(itemId))}
+          rootSpace={state.rootSpace}
+          onSaveRootSpace={(patch) => act(() => api.updateRootSpace(patch))}
+          onSaveLocation={(node, patch) => act(() => api.updateSpace(node.space.id, patch))}
         />
       )}
 
@@ -888,20 +888,20 @@ export default function App() {
       {!phone && (
         <div className="statusbar">
           <span>{tree.flat.length} spaces</span>
-          <span>{state.parts.length} distinct items</span>
-          <span>{state.stock.length} holdings</span>
-          <span>{fmtQty(world.totalQty)} units total</span>
+          <span>{state.items.length} distinct items</span>
+          <span>{state.holdings.length} holdings</span>
+          <span>{fmtQty(rootSpace.totalQty)} units total</span>
           <span className="spacer" />
           <span>
-            {`${root.c.cols} × ${root.c.rows} U · drag to draw · double-click to go inside` +
-              (root.c.id === WORLD_ID ? ' · / to search' : ' · click outside to go back')}
+            {`${root.space.cols} × ${root.space.rows} U · drag to draw · double-click to go inside` +
+              (root.space.id === ROOT_ID ? ' · / to search' : ' · click outside to go back')}
           </span>
         </div>
       )}
 
       {menuOpen && (
         <MobileMenu
-          hereName={root.c.name}
+          hereName={root.space.name}
           mode={mode}
           modes={MODES}
           onMode={setMode}
@@ -909,9 +909,9 @@ export default function App() {
           onEditing={setTouchEditing}
           stats={{
             spaces: tree.flat.length,
-            parts: state.parts.length,
-            holdings: state.stock.length,
-            units: fmtQty(world.totalQty),
+            items: state.items.length,
+            holdings: state.holdings.length,
+            units: fmtQty(rootSpace.totalQty),
           }}
           onDetails={() => setSheet('full')}
           onAdd={() => setDialog({ parent: root })}
@@ -926,11 +926,11 @@ export default function App() {
       )}
 
       {dialog && (
-        <ContainerDialog
+        <SpaceDialog
           parent={dialog.parent}
           existing={dialog.existing}
           types={types}
-          onSave={saveContainer}
+          onSave={saveSpace}
           onManageTypes={() => setTypesOpen(true)}
           onClose={() => setDialog(null)}
         />
@@ -940,7 +940,7 @@ export default function App() {
         <TypeManager
           types={types}
           usage={typeUsage}
-          onCreate={(data: Partial<StorageType>) => act(() => api.createType(data))}
+          onCreate={(data: Partial<SpaceType>) => act(() => api.createType(data))}
           onUpdate={(id, data) => act(() => api.updateType(id, data))}
           onDelete={(id) => act(() => api.deleteType(id))}
           onClose={() => setTypesOpen(false)}
@@ -976,7 +976,7 @@ export default function App() {
         />
       )}
 
-      <PartNames parts={state.parts} />
+      <ItemNames items={state.items} />
 
       {naming && (
         <NameDialog

@@ -1,7 +1,18 @@
 -- Spatial inventory schema.
 --
+-- The vocabulary, top to bottom:
+--
+--   location    a space with nothing above it — a workshop, a bedroom, a
+--               lock-up across town. Each is a tree in its own right.
+--   space       anywhere a thing can be: a closet, a shelf, a drawer. Spaces
+--               nest, and a location is just the outermost one.
+--   item        a distinct thing you own, independent of where it is. One row
+--               per "470 Ω resistor", however many drawers hold some.
+--   holding     an item in a space, with a quantity and a slot. The same
+--               resistor in two drawers is two holdings of one item.
+--
 -- Everything is measured in *units* (U) — abstract squares, not millimetres.
--- Every storage medium is a grid of cols × rows units, and every child claims a
+-- Every space is a grid of cols × rows units, and every child claims a
 -- rectangle of its parent's units. A 12×12 drawer unit holding 2×1 drawers, a
 -- filament rack that is 8×2 with each spool 1×2, a closet that is 20×24 with
 -- things dotted around inside it: all the same two numbers.
@@ -14,10 +25,6 @@
 -- Both use the same coordinate system, so the choice only affects snapping and
 -- how the interior is drawn.
 
--- The top level is a container too. It is not a row in `containers` because it
--- has no parent and there is exactly one of it, but it has the same grid, so
--- closets and benches can be placed against each other the same way drawers are
--- placed inside a cabinet.
 -- Bookkeeping for one-way migrations. A migration that can be detected by
 -- looking at the data does not need a row here; one that cannot — because the
 -- before and after states are shaped alike — records that it has run.
@@ -26,7 +33,10 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS workspace (
+-- The synthetic level above the locations. Not somewhere you can stand and not
+-- somewhere anything is stored — locations have no floor plan between them —
+-- but it carries a grid so the client has one uniform thing to lay out.
+CREATE TABLE IF NOT EXISTS root_space (
   id         INTEGER PRIMARY KEY CHECK (id = 1),
   name       TEXT    NOT NULL DEFAULT 'Workshop',
   layout     TEXT    NOT NULL DEFAULT 'grid',
@@ -36,9 +46,9 @@ CREATE TABLE IF NOT EXISTS workspace (
   updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
--- User-defined storage types. These double as the "start from" presets when
--- creating a container, and supply its default size, layout and colour.
-CREATE TABLE IF NOT EXISTS storage_types (
+-- User-defined kinds of space. These double as the "start from" presets when
+-- creating one, and supply its default size, layout and colour.
+CREATE TABLE IF NOT EXISTS space_types (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT    NOT NULL UNIQUE,
   layout     TEXT    NOT NULL DEFAULT 'grid',
@@ -51,10 +61,11 @@ CREATE TABLE IF NOT EXISTS storage_types (
   updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS containers (
+CREATE TABLE IF NOT EXISTS spaces (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  parent_id  INTEGER REFERENCES containers(id) ON DELETE CASCADE,
-  type_id    INTEGER REFERENCES storage_types(id) ON DELETE SET NULL,
+  -- Null means this is a location: the top of its own tree.
+  parent_id  INTEGER REFERENCES spaces(id) ON DELETE CASCADE,
+  type_id    INTEGER REFERENCES space_types(id) ON DELETE SET NULL,
   name       TEXT    NOT NULL,
 
   -- The rectangle this claims inside its parent, in the parent's units.
@@ -79,10 +90,12 @@ CREATE TABLE IF NOT EXISTS containers (
   updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_containers_parent ON containers(parent_id);
+CREATE INDEX IF NOT EXISTS idx_spaces_parent ON spaces(parent_id);
 
 -- The catalogue: one row per distinct thing, independent of where it lives.
-CREATE TABLE IF NOT EXISTS parts (
+-- `part_number` is the manufacturer's, which is what that phrase means on a
+-- datasheet — it is not this app's word for an item.
+CREATE TABLE IF NOT EXISTS items (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   name          TEXT NOT NULL,
   description   TEXT,
@@ -101,19 +114,19 @@ CREATE TABLE IF NOT EXISTS parts (
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_parts_name ON parts(name);
+CREATE INDEX IF NOT EXISTS idx_items_name ON items(name);
 
--- Where a part actually is. A part may sit in several containers at once
+-- Where an item actually is. An item may be held in several spaces at once
 -- (the same 470R resistor lives in two drawers).
-CREATE TABLE IF NOT EXISTS stock (
+CREATE TABLE IF NOT EXISTS holdings (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  part_id      INTEGER NOT NULL REFERENCES parts(id) ON DELETE CASCADE,
-  container_id INTEGER NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
+  item_id      INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  space_id     INTEGER NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
   qty          REAL    NOT NULL DEFAULT 0,
   note         TEXT,
 
-  -- Optional slot on the container's plan-view grid, in its units. NULL means
-  -- "somewhere in here" — the part is listed but not pinned to a compartment.
+  -- Optional slot on the space's plan-view grid, in its units. NULL means
+  -- "somewhere in here" — the item is listed but not pinned to a compartment.
   x            REAL,
   y            REAL,
   w            REAL,
@@ -121,8 +134,8 @@ CREATE TABLE IF NOT EXISTS stock (
 
   created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (part_id, container_id)
+  UNIQUE (item_id, space_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_stock_container ON stock(container_id);
-CREATE INDEX IF NOT EXISTS idx_stock_part ON stock(part_id);
+CREATE INDEX IF NOT EXISTS idx_holdings_space ON holdings(space_id);
+CREATE INDEX IF NOT EXISTS idx_holdings_item ON holdings(item_id);

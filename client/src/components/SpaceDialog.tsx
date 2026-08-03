@@ -1,38 +1,38 @@
 import { useState, type CSSProperties } from 'react';
 import { emptyCells } from '../layout';
 import { SWATCHES } from '../palette';
-import { WORLD_ID, type Container, type Layout, type Node, type RowOrigin, type StorageType } from '../types';
+import { ROOT_ID, type Space, type Layout, type Node, type RowOrigin, type SpaceType } from '../types';
 
-export interface ContainerDialogProps {
-  /** Parent for a new container; the world node means a new top-level place. */
+export interface SpaceDialogProps {
+  /** Parent for a new space; the root node means a new top-level place. */
   parent: Node;
   /** Present when editing rather than creating. */
   existing?: Node;
-  types: StorageType[];
-  onSave: (data: Partial<Container>) => void;
+  types: SpaceType[];
+  onSave: (data: Partial<Space>) => void;
   onManageTypes: () => void;
   onClose: () => void;
 }
 
-type Draft = Partial<Container> & { name: string };
+type Draft = Partial<Space> & { name: string };
 
 /**
  * The full form. Everyday creation happens by drawing on the grid instead —
  * this is for top-level places, and for adjusting anything numerically.
  */
-export function ContainerDialog({
+export function SpaceDialog({
   parent,
   existing,
   types,
   onSave,
   onManageTypes,
   onClose,
-}: ContainerDialogProps) {
+}: SpaceDialogProps) {
   const editing = !!existing;
 
   const [draft, setDraft] = useState<Draft>(() =>
     existing
-      ? { ...existing.c }
+      ? { ...existing.space }
       : {
           ...initialPlacement(parent),
           name: '',
@@ -62,14 +62,14 @@ export function ContainerDialog({
     }));
   };
 
-  const rows = Math.max(parent.c.rows, 1);
-  const bottomUp = parent.c.row_origin === 'bottom';
+  const rows = Math.max(parent.space.rows, 1);
+  const bottomUp = parent.space.row_origin === 'bottom';
   const displayRow = bottomUp ? rows - (draft.y ?? 0) - (draft.h ?? 1) + 1 : (draft.y ?? 0) + 1;
   const setDisplayRow = (r: number) => set('y', bottomUp ? rows - r - (draft.h ?? 1) + 1 : r - 1);
 
   const canSave = draft.name.trim().length > 0;
 
-  // The title bar wears the colour this container will actually be drawn in:
+  // The title bar wears the colour this space will actually be drawn in:
   // its own override if set, otherwise whatever the chosen type supplies.
   const tint = draft.color || types.find((t) => t.id === draft.type_id)?.color || null;
 
@@ -78,7 +78,7 @@ export function ContainerDialog({
       <div className="dialog">
         <header style={tintStyle(tint)}>
           {tint && <span className="swatch" style={{ background: tint, marginRight: 8 }} />}
-          {editing ? `Edit ${existing!.c.name}` : `Add inside ${parent.c.name}`}
+          {editing ? `Edit ${existing!.space.name}` : `Add inside ${parent.space.name}`}
           <span className="spacer" />
           <button className="btn ghost" onClick={onClose}>✕</button>
         </header>
@@ -111,13 +111,13 @@ export function ContainerDialog({
           </div>
 
           <div className="panel-title" style={{ marginTop: 6 }}>
-            Seen from the front, in {parent.c.name} — {parent.c.cols} × {parent.c.rows} U
+            Seen from the front, in {parent.space.name} — {parent.space.cols} × {parent.space.rows} U
           </div>
           <div className="grid-2">
             <div className="field">
-              <label>Column (1–{parent.c.cols})</label>
+              <label>Column (1–{parent.space.cols})</label>
               <input
-                type="number" min={1} max={parent.c.cols}
+                type="number" min={1} max={parent.space.cols}
                 value={(draft.x ?? 0) + 1}
                 onChange={(e) => set('x', Math.max(0, Number(e.target.value) - 1))}
               />
@@ -140,7 +140,7 @@ export function ContainerDialog({
             </div>
           </div>
           <p className="hint">
-            The slice it takes up on the face of {parent.c.name} — a drawer in a cabinet is one
+            The slice it takes up on the face of {parent.space.name} — a drawer in a cabinet is one
             slice tall. Easier to drag out on the grid than to type: close this and draw it.
           </p>
 
@@ -235,7 +235,7 @@ export function ContainerDialog({
   );
 }
 
-/** Wash the header in the container's colour, keeping the text readable. */
+/** Wash the header in the space's colour, keeping the text readable. */
 function tintStyle(tint: string | null): CSSProperties | undefined {
   if (!tint) return undefined;
   return {
@@ -247,10 +247,10 @@ function tintStyle(tint: string | null): CSSProperties | undefined {
 }
 
 /** First free cell, so a new child never lands on top of a sibling. */
-function initialPlacement(parent: Node): Partial<Container> {
+function initialPlacement(parent: Node): Partial<Space> {
   const spot = emptyCells(parent)[0] ?? { x: 0, y: 0 };
   // A top-level thing is a piece of furniture, not a drawer — 1×1 would be a
   // speck on a room-sized grid.
-  const span = parent.c.id === WORLD_ID ? { w: 6, h: 8 } : { w: 1, h: 1 };
+  const span = parent.space.id === ROOT_ID ? { w: 6, h: 8 } : { w: 1, h: 1 };
   return { x: spot.x, y: spot.y, ...span };
 }

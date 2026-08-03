@@ -204,7 +204,7 @@ const TOOLBAR_STEP: Step = {
         <dd>
           What the size of a block means. <b>Layout</b> is the real grid you drew.
           <b> Count</b> and <b>Volume</b> switch to a treemap where area follows the number of
-          distinct parts, or the total quantity held — good for spotting what is full.
+          distinct items, or the total quantity held — good for spotting what is full.
         </dd>
 
         <dt>+ Add</dt>

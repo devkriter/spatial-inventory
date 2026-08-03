@@ -1,34 +1,34 @@
 import { useState } from 'react';
 import { SWATCHES } from '../palette';
-import type { Layout, StorageType } from '../types';
+import type { Layout, SpaceType } from '../types';
 
 export interface TypeManagerProps {
-  types: StorageType[];
-  /** How many containers currently use each type, for the delete warning. */
+  types: SpaceType[];
+  /** How many spaces currently use each type, for the delete warning. */
   usage: Map<number, number>;
-  onCreate: (data: Partial<StorageType>) => void;
-  onUpdate: (id: number, data: Partial<StorageType>) => void;
+  onCreate: (data: Partial<SpaceType>) => void;
+  onUpdate: (id: number, data: Partial<SpaceType>) => void;
   onDelete: (id: number) => void;
   onClose: () => void;
 }
 
-const BLANK: Partial<StorageType> = { name: '', layout: 'grid', cols: 4, rows: 4, color: SWATCHES[0] };
+const BLANK: Partial<SpaceType> = { name: '', layout: 'grid', cols: 4, rows: 4, color: SWATCHES[0] };
 
 /**
- * Storage types are the vocabulary for your own shelves — "Gridfinity tray",
+ * Space types are the vocabulary for your own shelves — "Gridfinity tray",
  * "Bosch L-BOXX", "that blue tub". Each one carries a default size and layout
  * so creating the next one of the same thing is a single click.
  */
 export function TypeManager({ types, usage, onCreate, onUpdate, onDelete, onClose }: TypeManagerProps) {
   const [editing, setEditing] = useState<number | 'new' | null>(null);
-  const [draft, setDraft] = useState<Partial<StorageType>>(BLANK);
+  const [draft, setDraft] = useState<Partial<SpaceType>>(BLANK);
 
   const startNew = () => {
     setEditing('new');
     setDraft({ ...BLANK, sort: types.length });
   };
 
-  const startEdit = (type: StorageType) => {
+  const startEdit = (type: SpaceType) => {
     setEditing(type.id);
     setDraft({ ...type });
   };
@@ -42,7 +42,7 @@ export function TypeManager({ types, usage, onCreate, onUpdate, onDelete, onClos
     setDraft(BLANK);
   };
 
-  const set = <K extends keyof StorageType>(key: K, value: StorageType[K]) =>
+  const set = <K extends keyof SpaceType>(key: K, value: SpaceType[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
 
   return (
@@ -71,7 +71,7 @@ export function TypeManager({ types, usage, onCreate, onUpdate, onDelete, onClos
                   onClick={() => {
                     const used = usage.get(type.id) ?? 0;
                     const message = used
-                      ? `${used} container${used === 1 ? '' : 's'} use "${type.name}". They keep their size and layout but lose the label. Delete it?`
+                      ? `${used} space${used === 1 ? '' : 's'} use "${type.name}". They keep their size and layout but lose the label. Delete it?`
                       : `Delete the "${type.name}" type?`;
                     if (confirm(message)) onDelete(type.id);
                   }}

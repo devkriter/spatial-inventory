@@ -1,41 +1,41 @@
 import { useEffect, useState } from 'react';
 import type { Tree } from '../tree';
-import { WORLD_ID, type Part } from '../types';
+import { ROOT_ID, type Item } from '../types';
 
 export interface DisplacedPanelProps {
-  part: Part;
+  item: Item;
   tree: Tree;
-  onSavePart: (partId: number, patch: Partial<Part>) => void;
-  onPlace: (partId: number, containerId: number, qty: number) => void;
-  onForget: (partId: number) => void;
+  onSaveItem: (itemId: number, patch: Partial<Item>) => void;
+  onPlace: (itemId: number, spaceId: number, qty: number) => void;
+  onForget: (itemId: number) => void;
   onDismiss: () => void;
 }
 
 /**
- * A part the catalogue still knows about but which is not stored anywhere. It
+ * An item the catalogue still knows about but which is not stored anywhere. It
  * keeps its description and datasheet on purpose — you have not stopped owning
  * the *knowledge* of a 470 Ω resistor just because the drawer is empty — so this
  * offers the two things worth doing: put it back, or forget it entirely.
  */
 export function DisplacedPanel({
-  part,
+  item,
   tree,
-  onSavePart,
+  onSaveItem,
   onPlace,
   onForget,
   onDismiss,
 }: DisplacedPanelProps) {
-  const [name, setName] = useState(part.name);
+  const [name, setName] = useState(item.name);
   const [target, setTarget] = useState('');
   const [qty, setQty] = useState('1');
 
   useEffect(() => {
-    setName(part.name);
+    setName(item.name);
     setTarget('');
     setQty('1');
-  }, [part.id, part.name]);
+  }, [item.id, item.name]);
 
-  const places = tree.flat.filter((n) => n.c.id !== WORLD_ID);
+  const places = tree.flat.filter((n) => n.space.id !== ROOT_ID);
 
   return (
     <>
@@ -54,16 +54,16 @@ export function DisplacedPanel({
         <div className="row-actions">
           <button
             className="btn"
-            disabled={!name.trim() || name === part.name}
-            onClick={() => onSavePart(part.id, { name: name.trim() })}
+            disabled={!name.trim() || name === item.name}
+            onClick={() => onSaveItem(item.id, { name: name.trim() })}
           >
             Rename
           </button>
           <button
             className="btn danger"
             onClick={() => {
-              if (confirm(`Forget "${part.name}" completely? Its description and links go too.`)) {
-                onForget(part.id);
+              if (confirm(`Forget "${item.name}" completely? Its description and links go too.`)) {
+                onForget(item.id);
               }
             }}
           >
@@ -94,7 +94,7 @@ export function DisplacedPanel({
           >
             <option value="">Choose a place…</option>
             {places.map((n) => (
-              <option key={n.c.id} value={n.c.id}>
+              <option key={n.space.id} value={n.space.id}>
                 {n.path.map((c) => c.name).join(' › ')}
               </option>
             ))}
@@ -109,7 +109,7 @@ export function DisplacedPanel({
           <button
             className="btn primary"
             disabled={!target}
-            onClick={() => onPlace(part.id, Number(target), Number(qty) || 0)}
+            onClick={() => onPlace(item.id, Number(target), Number(qty) || 0)}
           >
             Place
           </button>

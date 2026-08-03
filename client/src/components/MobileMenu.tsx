@@ -9,7 +9,7 @@ export interface MobileMenuProps {
   onMode: (mode: SizeMode) => void;
   editing: boolean;
   onEditing: (on: boolean) => void;
-  stats: { spaces: number; parts: number; holdings: number; units: string };
+  stats: { spaces: number; items: number; holdings: number; units: string };
   onDetails: () => void;
   onAdd: () => void;
   onTypes: () => void;
@@ -61,7 +61,7 @@ export function MobileMenu(props: MobileMenuProps) {
             <span className="s-label">Edit the layout</span>
             <span className="s-hint">
               Off, dragging does nothing and the map is only for looking at — which is what you
-              want while you are hunting for an item. On, drag to draw, move and resize.
+              want while you are hunting for an holding. On, drag to draw, move and resize.
             </span>
           </span>
         </label>
@@ -100,7 +100,7 @@ export function MobileMenu(props: MobileMenuProps) {
         </div>
 
         <p className="m-stats">
-          {stats.spaces} spaces · {stats.parts} distinct items · {stats.holdings} holdings ·{' '}
+          {stats.spaces} spaces · {stats.items} distinct items · {stats.holdings} holdings ·{' '}
           {stats.units} units
         </p>
 

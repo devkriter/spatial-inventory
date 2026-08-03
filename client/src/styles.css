@@ -396,11 +396,11 @@ button, input, select, textarea {
 
 .block.dimmed { filter: saturate(.25) brightness(.55); }
 
-/* The stand-in for parts that did not fit at a legible size. */
+/* The stand-in for holdings that did not fit at a legible size. */
 .block.more { border-style: dashed; }
 .block.more .block-label .name { font-weight: 500; opacity: .8; }
 
-/* List form: one line per part, for when tiles would not all fit. */
+/* List form: one line per holding, for when tiles would not all fit. */
 .block.row {
   border-top-color: rgba(0, 0, 0, .3);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14);
@@ -485,7 +485,7 @@ button, input, select, textarea {
 .block-label.tiny .name { font-size: 12px; -webkit-line-clamp: 2; }
 .block-label.center { align-items: center; justify-content: center; text-align: center; }
 
-/* The header strip a container gets when it is showing its children. */
+/* The header strip a space gets when it is showing its children. */
 .block-head {
   position: absolute;
   left: 0;
@@ -585,7 +585,7 @@ button, input, select, textarea {
   font-size: 12px;
 }
 
-/* The unit grid you draw onto. Solid for grid containers, a whisper for free. */
+/* The unit grid you draw onto. Solid for grid spaces, a whisper for free. */
 .stage-grid {
   position: absolute;
   pointer-events: none;
@@ -621,14 +621,14 @@ button, input, select, textarea {
   background: rgba(224, 104, 92, .22);
 }
 
-/* Hovering a part over another container: it will be moved in there. */
+/* Hovering a holding over another space: it will be moved in there. */
 .draft.into {
   border-color: var(--ok);
   border-style: dashed;
   background: rgba(111, 196, 139, .2);
 }
 
-/* Carrying a part from one container to another. */
+/* Carrying a holding from one space to another. */
 .carry-ghost {
   position: absolute;
   z-index: 40;
@@ -897,8 +897,8 @@ button, input, select, textarea {
 
 .tree-row.ancestor > .t-box .t-name { color: #b9c6d4; }
 
-.tree-row.part > .t-box { background: none; color: var(--muted); }
-.tree-row.part > .t-box:hover { background: var(--panel-2); color: var(--text); }
+.tree-row.holding > .t-box { background: none; color: var(--muted); }
+.tree-row.holding > .t-box:hover { background: var(--panel-2); color: var(--text); }
 .tree-row.displaced > .t-box { border-style: dashed; border-color: #6d4550; }
 
 .t-box .twisty {

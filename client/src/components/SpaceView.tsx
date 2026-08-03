@@ -45,13 +45,13 @@ import {
 import { colorOf, typeName } from '../palette';
 import type { SearchResult } from '../search';
 import {
-  WORLD_ID,
-  type Container,
-  type Item,
+  ROOT_ID,
+  type Space,
+  type Holding,
   type Node,
   type Rect,
   type SizeMode,
-  type StorageType,
+  type SpaceType,
   type UnitRect,
 } from '../types';
 import { DrawPrompt } from './DrawPrompt';
@@ -94,12 +94,12 @@ const gripSize = (rect: Rect, touch = false): number =>
 
 export interface SpaceViewProps {
   root: Node;
-  types: StorageType[];
+  types: SpaceType[];
   mode: SizeMode;
   search: SearchResult;
   searching: boolean;
-  selectedStockId: number | null;
-  selectedContainerId: number | null;
+  selectedHoldingId: number | null;
+  selectedSpaceId: number | null;
   maxDepth: number;
   showGrid: boolean;
   /**
@@ -130,15 +130,15 @@ export interface SpaceViewProps {
   onSelect: (node: Node) => void;
   /** Double click — actually go inside. */
   onOpen: (node: Node) => void;
-  onSelectItem: (item: Item, holder: Node) => void;
+  onSelectHolding: (holding: Holding, holder: Node) => void;
   onDrawChild: (parent: Node, rect: UnitRect, name: string, typeId: number | null) => void;
-  onDrawPart: (parent: Node, rect: UnitRect, name: string, qty: number) => void;
+  onDrawItem: (parent: Node, rect: UnitRect, name: string, qty: number) => void;
   onPlaceChild: (node: Node, rect: UnitRect) => void;
-  onPlaceItem: (item: Item, rect: UnitRect) => void;
-  /** Dropped onto a neighbouring container: move it in there. */
-  onMoveItemInto: (item: Item, target: Node) => void;
-  /** Same, for a whole container — re-parenting it. */
-  onMoveContainerInto: (node: Node, target: Node) => void;
+  onPlaceHolding: (holding: Holding, rect: UnitRect) => void;
+  /** Dropped onto a neighbouring space: move it in there. */
+  onMoveHoldingInto: (holding: Holding, target: Node) => void;
+  /** Same, for a whole space — re-parenting it. */
+  onMoveSpaceInto: (node: Node, target: Node) => void;
   onUp: () => void;
   /** Clicked bare space: nothing is selected any more. */
   onDeselect: () => void;
@@ -154,19 +154,19 @@ interface Ctx {
 }
 
 /**
- * Containers and parts are dragged around the same grid. A part with no slot
+ * Spaces and items are dragged around the same grid. An item with no slot
  * carries the rectangle it happened to be drawn in, so dragging it turns that
  * into a real slot instead of refusing.
  */
 type Target =
-  | { kind: 'container'; node: Node }
-  | { kind: 'item'; item: Item; drawn: UnitRect };
+  | { kind: 'space'; node: Node }
+  | { kind: 'holding'; holding: Holding; drawn: UnitRect };
 
 const targetRect = (t: Target): UnitRect =>
-  t.kind === 'container' ? t.node.c : slotOf(t.item) ?? t.drawn;
+  t.kind === 'space' ? t.node.space : slotOf(t.holding) ?? t.drawn;
 
-/** Screen rect back into the container's units, snapped to its grid. */
-function toUnits(rect: Rect, frame: Rect, parent: Container): UnitRect {
+/** Screen rect back into the space's units, snapped to its grid. */
+function toUnits(rect: Rect, frame: Rect, parent: Space): UnitRect {
   const a = screenToUnits(rect.x, rect.y, frame, parent);
   const b = screenToUnits(rect.x + rect.w, rect.y + rect.h, frame, parent);
   return {
@@ -177,8 +177,8 @@ function toUnits(rect: Rect, frame: Rect, parent: Container): UnitRect {
   };
 }
 
-const targetExcept = (t: Target): Node | Item =>
-  t.kind === 'container' ? t.node : t.item;
+const targetExcept = (t: Target): Node | Holding =>
+  t.kind === 'space' ? t.node : t.holding;
 
 type Gesture =
   | { kind: 'draw'; from: { x: number; y: number } }
@@ -200,19 +200,19 @@ const LONG_PRESS_MS = 420;
 const LONG_PRESS_SLOP = 12;
 
 type Carried =
-  | { kind: 'item'; item: Item; holder: Node }
-  | { kind: 'container'; node: Node };
+  | { kind: 'holding'; holding: Holding; holder: Node }
+  | { kind: 'space'; node: Node };
 
 const carriedName = (c: Carried): string =>
-  c.kind === 'item' ? c.item.part.name : c.node.c.name;
+  c.kind === 'holding' ? c.holding.item.name : c.node.space.name;
 
 /** Where it is now, so dropping it back there is a no-op. */
 const carriedHome = (c: Carried): Node | null =>
-  c.kind === 'item' ? c.holder : c.node.parent;
+  c.kind === 'holding' ? c.holder : c.node.parent;
 
-/** You cannot put a container inside itself, or inside its own contents. */
+/** You cannot put a space inside itself, or inside its own contents. */
 const wouldNest = (c: Carried, target: Node): boolean => {
-  if (c.kind !== 'container') return false;
+  if (c.kind !== 'space') return false;
   for (let n: Node | null = target; n; n = n.parent) if (n === c.node) return true;
   return false;
 };
@@ -222,7 +222,7 @@ interface Hit {
   rect: Rect;
   depth: number;
   node?: Node;
-  item?: Item;
+  holding?: Holding;
   holder?: Node;
 }
 
@@ -271,7 +271,7 @@ export function SpaceView(props: SpaceViewProps) {
   // has nowhere above it, which is what `insideSomething` gates.
   const editable = mode === 'physical' && props.editing !== false;
   // Only promise a way out if clicking the margin actually takes one.
-  const insideSomething = root.c.id !== WORLD_ID && props.clickOutsideToGoBack;
+  const insideSomething = root.space.id !== ROOT_ID && props.clickOutsideToGoBack;
 
   /** Where the level sits at rest — the whole window, less a margin. */
   const base: Rect = {
@@ -345,7 +345,7 @@ export function SpaceView(props: SpaceViewProps) {
   useEffect(() => {
     setViewRaw(IDENTITY);
     userMoved.current = false;
-  }, [root.c.id, mode]);
+  }, [root.space.id, mode]);
 
   const stage = stageFor(base, view);
   const interior = useMemo(
@@ -364,12 +364,12 @@ export function SpaceView(props: SpaceViewProps) {
   const captured = useRef(false);
   const frameRef = useRef<Rect | null>(null);
   frameRef.current = interior?.frame ?? null;
-  /** What is on screen at this level, for hit-testing parts by their drawn box. */
+  /** What is on screen at this level, for hit-testing items by their drawn box. */
   const placedRef = useRef<Placed[]>([]);
   placedRef.current = interior?.placed ?? [];
-  /** Every block drawn, at every depth, for carrying a part across containers. */
+  /** Every block drawn, at every depth, for carrying an item across spaces. */
   const hitsRef = useRef<Hit[]>([]);
-  /** Where a carried part currently is, and what it would drop into. */
+  /** Where a carried item currently is, and what it would drop into. */
   const [carry, setCarry] = useState<{ x: number; y: number; onto: Node | null } | null>(null);
   /** Live fingers, so a second one can turn a pan into a pinch. */
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -399,29 +399,29 @@ export function SpaceView(props: SpaceViewProps) {
       const frame = frameRef.current;
       if (!ref.current || !frame) return null;
       const p = screenPoint(e);
-      return screenToUnits(p.x, p.y, frame, root.c);
+      return screenToUnits(p.x, p.y, frame, root.space);
     },
-    [root.c, screenPoint]
+    [root.space, screenPoint]
   );
 
   /** Everything the dragged rectangle must not land on. */
   const obstacles = useCallback(
-    (except?: Node | Item) => claims(root, except),
+    (except?: Node | Holding) => claims(root, except),
     [root]
   );
 
   /**
-   * A part dropped on top of a container goes *into* it, rather than being
+   * An item dropped on top of a space goes *into* it, rather than being
    * refused for overlapping — dragging something from one drawer to the next is
    * the obvious way to move it.
    */
   const dropInto = useMemo(() => {
-    if (!draft || gesture?.kind !== 'move' || gesture.target.kind !== 'item') return null;
+    if (!draft || gesture?.kind !== 'move' || gesture.target.kind !== 'holding') return null;
     const cx = draft.x + draft.w / 2;
     const cy = draft.y + draft.h / 2;
     return (
       root.children.find(
-        (c) => cx >= c.c.x && cx < c.c.x + c.c.w && cy >= c.c.y && cy < c.c.y + c.c.h
+        (c) => cx >= c.space.x && cx < c.space.x + c.space.w && cy >= c.space.y && cy < c.space.y + c.space.h
       ) ?? null
     );
   }, [draft, gesture, root.children]);
@@ -443,20 +443,20 @@ export function SpaceView(props: SpaceViewProps) {
    */
   const handleTarget = useMemo<Target | null>(() => {
     if (!touch || !editable || !interior) return null;
-    if (props.selectedStockId != null) {
+    if (props.selectedHoldingId != null) {
       const p = interior.placed.find(
-        (entry) => entry.kind === 'item' && !entry.dense && entry.item?.stock.id === props.selectedStockId
+        (entry) => entry.kind === 'holding' && !entry.dense && entry.holding?.row.id === props.selectedHoldingId
       );
-      if (p?.item) {
-        return { kind: 'item', item: p.item, drawn: toUnits(p.rect, interior.frame, root.c) };
+      if (p?.holding) {
+        return { kind: 'holding', holding: p.holding, drawn: toUnits(p.rect, interior.frame, root.space) };
       }
     }
-    if (props.selectedContainerId != null) {
-      const child = root.children.find((c) => c.c.id === props.selectedContainerId);
-      if (child) return { kind: 'container', node: child };
+    if (props.selectedSpaceId != null) {
+      const child = root.children.find((c) => c.space.id === props.selectedSpaceId);
+      if (child) return { kind: 'space', node: child };
     }
     return null;
-  }, [touch, editable, interior, props.selectedStockId, props.selectedContainerId, root]);
+  }, [touch, editable, interior, props.selectedHoldingId, props.selectedSpaceId, root]);
 
   const handleRef = useRef(handleTarget);
   handleRef.current = handleTarget;
@@ -478,15 +478,15 @@ export function SpaceView(props: SpaceViewProps) {
       if (!frame) return;
       const p = screenPoint({ clientX, clientY });
       const screen = screenPoint({ clientX, clientY });
-      const at = screenToUnits(p.x, p.y, frame, root.c);
+      const at = screenToUnits(p.x, p.y, frame, root.space);
 
       const under = deepestAt(p.x, p.y);
-      const payload: Carried | null = under?.item
+      const payload: Carried | null = under?.holding
         ? under.holder
-          ? { kind: 'item', item: under.item, holder: under.holder }
+          ? { kind: 'holding', holding: under.holding, holder: under.holder }
           : null
         : under?.node
-          ? { kind: 'container', node: under.node }
+          ? { kind: 'space', node: under.node }
           : null;
 
       heldRef.current = true;
@@ -500,11 +500,11 @@ export function SpaceView(props: SpaceViewProps) {
         return;
       }
 
-      const units = interiorUnits(root.c);
+      const units = interiorUnits(root.space);
       if (at.x < 0 || at.y < 0 || at.x >= units.w || at.y >= units.h) return;
 
-      const step = snapStep(root.c);
-      const min = minSpan(root.c);
+      const step = snapStep(root.space);
+      const min = minSpan(root.space);
       const from = { x: snapTo(at.x, step), y: snapTo(at.y, step) };
       setGesture({ kind: 'draw', from });
       // Show the rectangle straight away — otherwise the long press appears to
@@ -610,8 +610,8 @@ export function SpaceView(props: SpaceViewProps) {
     const frame = frameRef.current;
     if (!at || !frame) return;
 
-    const units = interiorUnits(root.c);
-    // The letterboxed margin is outside the container altogether. Drawing there
+    const units = interiorUnits(root.space);
+    // The letterboxed margin is outside the space altogether. Drawing there
     // used to get clamped into the grid, quietly creating things off-canvas.
     const outsideInterior = at.x < 0 || at.y < 0 || at.x >= units.w || at.y >= units.h;
 
@@ -624,12 +624,12 @@ export function SpaceView(props: SpaceViewProps) {
       .filter((entry) => entry.depth > 0 && over(entry.rect))
       .sort((a, b) => b.depth - a.depth)[0];
     if (deep) {
-      const payload: Carried | null = deep.item
+      const payload: Carried | null = deep.holding
         ? deep.holder
-          ? { kind: 'item', item: deep.item, holder: deep.holder }
+          ? { kind: 'holding', holding: deep.holding, holder: deep.holder }
           : null
         : deep.node
-          ? { kind: 'container', node: deep.node }
+          ? { kind: 'space', node: deep.node }
           : null;
       if (payload) {
         setGesture({ kind: 'carry', payload });
@@ -639,20 +639,20 @@ export function SpaceView(props: SpaceViewProps) {
       }
     }
 
-    // Hit-test against what was actually drawn, so a loose part — which has no
+    // Hit-test against what was actually drawn, so a loose item — which has no
     // slot yet — can still be grabbed and thereby given one.
     let target: Target | undefined;
     for (const p of placedRef.current) {
-      if (p.kind === 'item' && p.item && over(p.rect)) {
-        target = { kind: 'item', item: p.item, drawn: toUnits(p.rect, frame, root.c) };
+      if (p.kind === 'holding' && p.holding && over(p.rect)) {
+        target = { kind: 'holding', holding: p.holding, drawn: toUnits(p.rect, frame, root.space) };
         break;
       }
     }
     if (!target) {
       const child = root.children.find(
-        (c) => at.x >= c.c.x && at.x < c.c.x + c.c.w && at.y >= c.c.y && at.y < c.c.y + c.c.h
+        (c) => at.x >= c.space.x && at.x < c.space.x + c.space.w && at.y >= c.space.y && at.y < c.space.y + c.space.h
       );
-      if (child) target = { kind: 'container', node: child };
+      if (child) target = { kind: 'space', node: child };
     }
 
     if (!target && outsideInterior) {
@@ -665,14 +665,14 @@ export function SpaceView(props: SpaceViewProps) {
     // retargets the following click event to the viewport, which would stop
     // clicks ever reaching a block — capture is deferred until a real drag.
     if (!target) {
-      const step = snapStep(root.c);
+      const step = snapStep(root.space);
       setGesture({ kind: 'draw', from: { x: snapTo(at.x, step), y: snapTo(at.y, step) } });
       setDraft(null);
       return;
     }
 
     const current = targetRect(target);
-    const box = unitsToScreen(current, frame, root.c);
+    const box = unitsToScreen(current, frame, root.space);
 
     // The drawn corner resizes.
     const grip = gripSize(box, touch);
@@ -684,9 +684,9 @@ export function SpaceView(props: SpaceViewProps) {
 
     // Moving is grabbed by the title bar only, so pressing the body of a block
     // is always just a click — you can never nudge a drawer out of place while
-    // trying to look inside it. Anything with no title bar (a part, or a block
+    // trying to look inside it. Anything with no title bar (an item, or a block
     // too small for one) uses its whole face as the handle.
-    const strip = target.kind === 'container' ? headStripOf(target.node, box, props.maxDepth) : 0;
+    const strip = target.kind === 'space' ? headStripOf(target.node, box, props.maxDepth) : 0;
     const byHead = strip > 0 ? py <= box.y + strip : true;
     if (!byHead) {
       setGesture(null);
@@ -704,7 +704,7 @@ export function SpaceView(props: SpaceViewProps) {
 
   /**
    * What a carried thing would land in if released at this point. The deepest
-   * container under the pointer wins; failing that, the level itself, which is
+   * space under the pointer wins; failing that, the level itself, which is
    * how you pull something back out of whatever it is buried in.
    */
   const dropTargetAt = useCallback(
@@ -779,9 +779,9 @@ export function SpaceView(props: SpaceViewProps) {
 
     const at = pointerUnits(e);
     if (!at) return;
-    const step = snapStep(root.c);
-    const min = minSpan(root.c);
-    const units = interiorUnits(root.c);
+    const step = snapStep(root.space);
+    const min = minSpan(root.space);
+    const units = interiorUnits(root.space);
 
     // Now that it is definitely a drag, take the pointer so it keeps tracking
     // even if it leaves the viewport. Retargeting the click no longer matters.
@@ -832,7 +832,7 @@ export function SpaceView(props: SpaceViewProps) {
             w: current.w,
             h: current.h,
           },
-          root.c
+          root.space
         )
       );
     } else {
@@ -894,8 +894,8 @@ export function SpaceView(props: SpaceViewProps) {
       // A long press that was picked up and put straight back down is a
       // cancelled pick-up, not a move — `onto` is null there, so nothing runs.
       if (wasDrag && onto) {
-        if (g.payload.kind === 'item') props.onMoveItemInto(g.payload.item, onto);
-        else props.onMoveContainerInto(g.payload.node, onto);
+        if (g.payload.kind === 'holding') props.onMoveHoldingInto(g.payload.holding, onto);
+        else props.onMoveSpaceInto(g.payload.node, onto);
       }
       return;
     }
@@ -918,9 +918,9 @@ export function SpaceView(props: SpaceViewProps) {
       setPending(d); // keep it on screen while the name is typed
     } else {
       setDraft(null);
-      if (g.target.kind === 'container') props.onPlaceChild(g.target.node, d);
-      else if (dropInto) props.onMoveItemInto(g.target.item, dropInto);
-      else props.onPlaceItem(g.target.item, d);
+      if (g.target.kind === 'space') props.onPlaceChild(g.target.node, d);
+      else if (dropInto) props.onMoveHoldingInto(g.target.holding, dropInto);
+      else props.onPlaceHolding(g.target.holding, d);
     }
   };
 
@@ -979,15 +979,15 @@ export function SpaceView(props: SpaceViewProps) {
     );
 
     // The grid is drawn for both layouts as a placement reference — a free
-    // container just gets a fainter one, since nothing has to line up with it.
+    // space just gets a fainter one, since nothing has to line up with it.
     if (editable && props.showGrid) {
-      const units = interiorUnits(root.c);
+      const units = interiorUnits(root.space);
       const cell = interior.frame.w / units.w;
       if (cell >= 5) {
         out.push(
           <div
             key="stage-grid"
-            className={root.c.layout === 'grid' ? 'stage-grid' : 'stage-grid faint'}
+            className={root.space.layout === 'grid' ? 'stage-grid' : 'stage-grid faint'}
             style={{
               left: interior.frame.x,
               top: interior.frame.y,
@@ -1054,7 +1054,7 @@ export function SpaceView(props: SpaceViewProps) {
 
     const ghost = pending ?? draft;
     if (ghost && interior.frame) {
-      const box = unitsToScreen(ghost, interior.frame, root.c);
+      const box = unitsToScreen(ghost, interior.frame, root.space);
       out.push(
         <div
           key="draft"
@@ -1063,7 +1063,7 @@ export function SpaceView(props: SpaceViewProps) {
         >
           <span>
             {dropInto
-              ? `into ${dropInto.c.name}`
+              ? `into ${dropInto.space.name}`
               : valid
                 ? size(ghost)
                 : `${size(ghost)} — blocked`}
@@ -1075,7 +1075,7 @@ export function SpaceView(props: SpaceViewProps) {
 
   // Shown whether or not you can draw: an empty level that says nothing at all
   // looks broken, and with editing off you still need to be told why.
-  const hint = !root.children.length && !root.items.length;
+  const hint = !root.children.length && !root.holdings.length;
 
   /**
    * Drop a new rectangle into the biggest clear patch and go straight to naming
@@ -1085,8 +1085,8 @@ export function SpaceView(props: SpaceViewProps) {
    */
   const addHere = () => {
     const free = largestFreeRect(root);
-    const units = interiorUnits(root.c);
-    const step = snapStep(root.c);
+    const units = interiorUnits(root.space);
+    const step = snapStep(root.space);
     const box = free ?? { x: 0, y: 0, w: units.w, h: units.h };
     setPending({
       x: box.x,
@@ -1102,7 +1102,7 @@ export function SpaceView(props: SpaceViewProps) {
   const zoomed = !atRest(view);
   const handleBox =
     handleTarget && interior
-      ? unitsToScreen(draft ?? targetRect(handleTarget), interior.frame, root.c)
+      ? unitsToScreen(draft ?? targetRect(handleTarget), interior.frame, root.space)
       : null;
 
   /**
@@ -1147,7 +1147,7 @@ export function SpaceView(props: SpaceViewProps) {
 
         // The margin is "outside" this level, so clicking it steps back out —
         // the discoverable version of right-click / Backspace.
-        if (outside && props.clickOutsideToGoBack && root.c.id !== WORLD_ID) {
+        if (outside && props.clickOutsideToGoBack && root.space.id !== ROOT_ID) {
           onUp();
           return;
         }
@@ -1191,7 +1191,7 @@ export function SpaceView(props: SpaceViewProps) {
       {carry && (
         <div className="carry-ghost" style={{ left: carry.x + 14, top: carry.y + 14 }}>
           {gesture?.kind === 'carry' ? carriedName(gesture.payload) : ''}
-          {carry.onto && <b> → {carry.onto.c.name}</b>}
+          {carry.onto && <b> → {carry.onto.space.name}</b>}
         </div>
       )}
 
@@ -1201,8 +1201,8 @@ export function SpaceView(props: SpaceViewProps) {
             <button
               className="map-tool add"
               onClick={addHere}
-              title={`Add something inside ${root.c.name}`}
-              aria-label={`Add something inside ${root.c.name}`}
+              title={`Add something inside ${root.space.name}`}
+              aria-label={`Add something inside ${root.space.name}`}
             >
               ＋
             </button>
@@ -1231,15 +1231,15 @@ export function SpaceView(props: SpaceViewProps) {
           rect={pending}
           // The prompt is outside the transformed layer, so it needs where the
           // rectangle actually appears, not where it was laid out.
-          anchor={unitsToScreen(pending, interior.frame, root.c)}
+          anchor={unitsToScreen(pending, interior.frame, root.space)}
           types={props.types}
-          canHoldItems={root.c.id !== WORLD_ID}
+          canHoldItems={root.space.id !== ROOT_ID}
           onCancel={() => {
             setPending(null);
             setDraft(null);
           }}
           onCreate={(what, name, typeId, qty) => {
-            if (what === 'part' && root.c.id !== WORLD_ID) props.onDrawPart(root, pending, name, qty);
+            if (what === 'item' && root.space.id !== ROOT_ID) props.onDrawItem(root, pending, name, qty);
             else props.onDrawChild(root, pending, name, typeId);
             setPending(null);
             setDraft(null);
@@ -1249,8 +1249,8 @@ export function SpaceView(props: SpaceViewProps) {
 
       {hint && (
         <DrawHint
-          name={root.c.name}
-          atTop={root.c.id === WORLD_ID}
+          name={root.space.name}
+          atTop={root.space.id === ROOT_ID}
           editable={editable}
           touch={touch}
         />
@@ -1293,7 +1293,7 @@ function DrawHint({
 // always exactly the strip you can see.
 
 const showsContents = (node: Node, rect: Rect, maxDepth: number, depth: number): boolean =>
-  (node.children.length > 0 || node.items.length > 0) &&
+  (node.children.length > 0 || node.holdings.length > 0) &&
   depth < maxDepth &&
   rect.w > CONTENT_MIN &&
   rect.h > CONTENT_MIN;
@@ -1332,8 +1332,8 @@ function emitBlock(placed: Placed, parent: Node, depth: number, ctx: Ctx) {
 
   if (placed.kind === 'empty') return; // the grid overlay already shows these
 
-  if (placed.kind === 'item') {
-    emitItem(placed, parent, depth, ctx);
+  if (placed.kind === 'holding') {
+    emitHolding(placed, parent, depth, ctx);
     return;
   }
 
@@ -1341,10 +1341,10 @@ function emitBlock(placed: Placed, parent: Node, depth: number, ctx: Ctx) {
     const count = placed.count ?? 0;
     ctx.out.push(
       <div
-        key={`s${parent.c.id}-${placed.key}`}
-        className={cx('block', 'part', 'more', placed.dense && 'row', ctx.props.searching && 'dimmed')}
+        key={`s${parent.space.id}-${placed.key}`}
+        className={cx('block', 'holding', 'more', placed.dense && 'row', ctx.props.searching && 'dimmed')}
         style={{ ...boxStyle(rect, depth + 1), ...fillStyle('#8a7a63', depth + 1) }}
-        title={`${count} more item${count === 1 ? '' : 's'} in ${parent.c.name} — open it to see them`}
+        title={`${count} more item${count === 1 ? '' : 's'} in ${parent.space.name} — open it to see them`}
         onClick={(e) => {
           e.stopPropagation();
           if (ctx.clickBlocked()) return;
@@ -1363,32 +1363,32 @@ function emitBlock(placed: Placed, parent: Node, depth: number, ctx: Ctx) {
 
   const { props } = ctx;
   const node = placed.node!;
-  const matched = props.search.matched.has(node.c.id);
-  const onPath = props.search.onPath.has(node.c.id);
+  const matched = props.search.matched.has(node.space.id);
+  const onPath = props.search.onPath.has(node.space.id);
   const dimmed = props.searching && !matched && !onPath;
 
   const showContents = showsContents(node, rect, props.maxDepth, depth);
   const head = headHeight(rect, showContents);
   const tight = head > 0 && head < HEAD_H;
 
-  const address = cellAddress(parent.c, node.c);
+  const address = cellAddress(parent.space, node.space);
   const summary = describe(node);
   const movable = depth === 0 && props.mode === 'physical';
   ctx.hits.push({ rect, depth, node });
 
   ctx.out.push(
     <div
-      key={`c${node.c.id}`}
+      key={`c${node.space.id}`}
       className={cx(
         'block',
         movable && 'movable',
         dimmed && 'dimmed',
         matched && 'match',
         !matched && onPath && 'onpath',
-        props.selectedContainerId === node.c.id && 'selected'
+        props.selectedSpaceId === node.space.id && 'selected'
       )}
       style={{ ...boxStyle(rect, depth), ...fillStyle(colorOf(node), depth) }}
-      title={`${node.c.name}\n${typeName(node)} · ${node.c.cols}×${node.c.rows} U inside · takes ${size(node.c)} U${address ? ` at ${address}` : ''}\n${summary}\n\nClick to inspect · double-click to go inside`}
+      title={`${node.space.name}\n${typeName(node)} · ${node.space.cols}×${node.space.rows} U inside · takes ${size(node.space)} U${address ? ` at ${address}` : ''}\n${summary}\n\nClick to inspect · double-click to go inside`}
       onClick={(e) => {
         e.stopPropagation();
         if (ctx.clickBlocked()) return;
@@ -1405,13 +1405,13 @@ function emitBlock(placed: Placed, parent: Node, depth: number, ctx: Ctx) {
           <div
             className={cx('block-head', tight && 'tight')}
             style={{ height: head }}
-            title={`Drag to move ${node.c.name}`}
+            title={`Drag to move ${node.space.name}`}
           >
             {movable && !tight && rect.w > 90 && <span className="grip">⠿</span>}
-            <span className="grow">{node.c.name}</span>
+            <span className="grow">{node.space.name}</span>
             {/* Its own capacity, which is what you want to know at a glance —
                 where it sits is already obvious from looking at it. */}
-            {!tight && rect.w > 130 && <span className="addr">{node.c.cols}×{node.c.rows} U</span>}
+            {!tight && rect.w > 130 && <span className="addr">{node.space.cols}×{node.space.rows} U</span>}
           </div>
           {!showContents && (
             <div className="block-empty" style={{ top: head }}>
@@ -1420,7 +1420,7 @@ function emitBlock(placed: Placed, parent: Node, depth: number, ctx: Ctx) {
           )}
         </>
       ) : (
-        <Label rect={rect} name={node.c.name} meta={summary} centered={!showContents} />
+        <Label rect={rect} name={node.space.name} meta={summary} centered={!showContents} />
       )}
       {movable && <Grip rect={rect} touch={ctx.touch} />}
     </div>
@@ -1445,41 +1445,41 @@ function emitBlock(placed: Placed, parent: Node, depth: number, ctx: Ctx) {
   for (const child of interior.placed) emitBlock(child, node, depth + 1, ctx);
 }
 
-function emitItem(placed: Placed, holder: Node, depth: number, ctx: Ctx) {
+function emitHolding(placed: Placed, holder: Node, depth: number, ctx: Ctx) {
   const { props } = ctx;
   const { rect } = placed;
-  const item = placed.item!;
-  // Every part at this level can be dragged; doing so is what gives a loose one
+  const holding = placed.holding!;
+  // Every item at this level can be dragged; doing so is what gives a loose one
   // a slot in the first place.
   const grabbable = depth === 0 && props.mode === 'physical' && !placed.dense;
-  ctx.hits.push({ rect, depth, item, holder });
-  const matched = props.search.matchedStock.has(item.stock.id);
+  ctx.hits.push({ rect, depth, holding, holder });
+  const matched = props.search.matchedHoldings.has(holding.row.id);
   const dimmed = props.searching && !matched;
-  const selected = props.selectedStockId === item.stock.id;
-  const low = item.part.min_qty != null && item.stock.qty < item.part.min_qty;
+  const selected = props.selectedHoldingId === holding.row.id;
+  const low = holding.item.min_qty != null && holding.row.qty < holding.item.min_qty;
 
   ctx.out.push(
     <div
-      key={`i${item.stock.id}`}
+      key={`i${holding.row.id}`}
       className={cx(
-        'block', 'part', placed.dense && 'row', grabbable && 'movable',
+        'block', 'holding', placed.dense && 'row', grabbable && 'movable',
         dimmed && 'dimmed', matched && 'match', selected && 'selected'
       )}
       style={{ ...boxStyle(rect, depth + 1), ...fillStyle(low ? '#c2604f' : '#c39a5e', depth + 1) }}
-      title={`${item.part.name}\n${item.stock.qty} ${item.part.unit}${low ? '  ⚠ below minimum' : ''}`}
+      title={`${holding.item.name}\n${holding.row.qty} ${holding.item.unit}${low ? '  ⚠ below minimum' : ''}`}
       onClick={(e) => {
         e.stopPropagation();
         if (ctx.clickBlocked()) return;
-        props.onSelectItem(item, holder);
+        props.onSelectHolding(holding, holder);
       }}
     >
       {placed.dense ? (
-        <Row rect={rect} name={item.part.name} qty={fmtQty(item.stock.qty)} />
+        <Row rect={rect} name={holding.item.name} qty={fmtQty(holding.row.qty)} />
       ) : (
         <Label
           rect={rect}
-          name={item.part.name}
-          meta={`${fmtQty(item.stock.qty)} ${item.part.unit}`}
+          name={holding.item.name}
+          meta={`${fmtQty(holding.row.qty)} ${holding.item.unit}`}
           centered={rect.h < 34}
         />
       )}
@@ -1635,7 +1635,7 @@ function fillStyle(color: string | null, depth: number): CSSProperties {
 
 /* ------------------------------------------------------------------ helpers */
 
-const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(' ');
+const cx = (...classes: (string | false | null | undefined)[]) => classes.filter(Boolean).join(' ');
 
 export function fmtQty(qty: number): string {
   if (!Number.isFinite(qty)) return '0';
@@ -1645,8 +1645,8 @@ export function fmtQty(qty: number): string {
 
 function describe(node: Node): string {
   const bits: string[] = [];
-  if (node.totalContainers) bits.push(`${node.totalContainers} spaces`);
-  if (node.totalItems) bits.push(`${node.totalItems} items`);
+  if (node.totalSpaces) bits.push(`${node.totalSpaces} spaces`);
+  if (node.totalHoldings) bits.push(`${node.totalHoldings} items`);
   if (!bits.length) bits.push('empty');
   return bits.join(' · ');
 }

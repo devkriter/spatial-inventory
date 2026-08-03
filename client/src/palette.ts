@@ -25,7 +25,7 @@ export const SWATCHES = [
   '#cfa87a', '#a07a4a', '#8a6a45', '#a2705c', '#8a5060', '#6a5a86',
 ];
 
-/** A container's own colour wins, then its type's, then the depth default. */
-export const colorOf = (node: Node): string | null => node.c.color || node.type?.color || null;
+/** A space's own colour wins, then its type's, then the depth default. */
+export const colorOf = (node: Node): string | null => node.space.color || node.type?.color || null;
 
 export const typeName = (node: Node): string => node.type?.name ?? 'Untyped';

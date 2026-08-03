@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import {
   db, all, get, run, tx, driver, dbPath, checkpointAndClose, snapshot,
-  ensureLocation, ensureLocationInTransaction,
+  ensureLocationInTransaction,
 } from './db.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -17,21 +17,23 @@ app.use(express.json({ limit: '20mb' }));
 
 /* ------------------------------------------------------------------ utils */
 
-const CONTAINER_FIELDS = [
+const SPACE_FIELDS = [
   'parent_id', 'type_id', 'name', 'x', 'y', 'w', 'h', 'layout', 'cols', 'rows',
   'row_origin', 'color', 'notes', 'sort',
 ];
 
 const TYPE_FIELDS = ['name', 'layout', 'cols', 'rows', 'color', 'notes', 'sort'];
 
-const WORKSPACE_FIELDS = ['name', 'layout', 'cols', 'rows', 'row_origin'];
+const ROOT_SPACE_FIELDS = ['name', 'layout', 'cols', 'rows', 'row_origin'];
 
-const PART_FIELDS = [
+// `part_number` is the manufacturer's part number, off the datasheet. It is not
+// this app's word for an item and does not get renamed with the rest.
+const ITEM_FIELDS = [
   'name', 'description', 'part_number', 'manufacturer', 'category', 'tags',
   'package', 'value', 'datasheet_url', 'image_url', 'unit', 'min_qty', 'notes',
 ];
 
-const STOCK_FIELDS = ['part_id', 'container_id', 'qty', 'note', 'x', 'y', 'w', 'h'];
+const HOLDING_FIELDS = ['item_id', 'space_id', 'qty', 'note', 'x', 'y', 'w', 'h'];
 
 /** Keep only known columns, and normalise `undefined` away. */
 function pick(body, fields) {
@@ -81,58 +83,58 @@ const id = (req) => Number(req.params.id);
 // The whole dataset in one request. A hobby inventory is a few thousand rows at
 // most, and having it client-side makes the spatial view and search instant.
 app.get('/api/state', h(() => ({
-  workspace: get('SELECT * FROM workspace WHERE id = 1'),
-  types: all('SELECT * FROM storage_types ORDER BY sort, name COLLATE NOCASE'),
-  containers: all('SELECT * FROM containers ORDER BY sort, id'),
-  parts: all('SELECT * FROM parts ORDER BY name COLLATE NOCASE'),
-  stock: all('SELECT * FROM stock ORDER BY id'),
+  rootSpace: get('SELECT * FROM root_space WHERE id = 1'),
+  types: all('SELECT * FROM space_types ORDER BY sort, name COLLATE NOCASE'),
+  spaces: all('SELECT * FROM spaces ORDER BY sort, id'),
+  items: all('SELECT * FROM items ORDER BY name COLLATE NOCASE'),
+  holdings: all('SELECT * FROM holdings ORDER BY id'),
 })));
 
-app.patch('/api/workspace', h((req) => {
-  update('workspace', 1, pick(req.body, WORKSPACE_FIELDS));
-  return get('SELECT * FROM workspace WHERE id = 1');
+app.patch('/api/root-space', h((req) => {
+  update('root_space', 1, pick(req.body, ROOT_SPACE_FIELDS));
+  return get('SELECT * FROM root_space WHERE id = 1');
 }));
 
-/* ----------------------------------------------------------- storage types */
+/* --------------------------------------------------------------- space types */
 
-app.post('/api/types', h((req) => {
+app.post('/api/space-types', h((req) => {
   const data = pick(req.body, TYPE_FIELDS);
   if (!data.name) throw new HttpError(400, 'name is required');
-  if (get('SELECT id FROM storage_types WHERE name = ? COLLATE NOCASE', data.name)) {
-    throw new HttpError(409, `a storage type called "${data.name}" already exists`);
+  if (get('SELECT id FROM space_types WHERE name = ? COLLATE NOCASE', data.name)) {
+    throw new HttpError(409, `a space type called "${data.name}" already exists`);
   }
-  return get('SELECT * FROM storage_types WHERE id = ?', insert('storage_types', data));
+  return get('SELECT * FROM space_types WHERE id = ?', insert('space_types', data));
 }));
 
-app.patch('/api/types/:id', h((req) => {
-  if (!get('SELECT id FROM storage_types WHERE id = ?', id(req))) {
-    throw new HttpError(404, 'storage type not found');
+app.patch('/api/space-types/:id', h((req) => {
+  if (!get('SELECT id FROM space_types WHERE id = ?', id(req))) {
+    throw new HttpError(404, 'space type not found');
   }
-  update('storage_types', id(req), pick(req.body, TYPE_FIELDS));
-  return get('SELECT * FROM storage_types WHERE id = ?', id(req));
+  update('space_types', id(req), pick(req.body, TYPE_FIELDS));
+  return get('SELECT * FROM space_types WHERE id = ?', id(req));
 }));
 
-// Containers keep their own size and layout; they just lose the label.
-app.delete('/api/types/:id', h((req) => {
-  const changes = run('DELETE FROM storage_types WHERE id = ?', id(req)).changes;
-  if (!changes) throw new HttpError(404, 'storage type not found');
+// Spaces keep their own size and layout; they just lose the label.
+app.delete('/api/space-types/:id', h((req) => {
+  const changes = run('DELETE FROM space_types WHERE id = ?', id(req)).changes;
+  if (!changes) throw new HttpError(404, 'space type not found');
   return { ok: true };
 }));
 
-/* ------------------------------------------------------------- containers */
+/* ----------------------------------------------------------------- spaces */
 
-app.post('/api/containers', h((req) => {
-  const data = pick(req.body, CONTAINER_FIELDS);
+app.post('/api/spaces', h((req) => {
+  const data = pick(req.body, SPACE_FIELDS);
   if (!data.name) throw new HttpError(400, 'name is required');
-  const newId = insert('containers', data);
-  return get('SELECT * FROM containers WHERE id = ?', newId);
+  const newId = insert('spaces', data);
+  return get('SELECT * FROM spaces WHERE id = ?', newId);
 }));
 
-app.patch('/api/containers/:id', h((req) => {
-  const existing = get('SELECT * FROM containers WHERE id = ?', id(req));
-  if (!existing) throw new HttpError(404, 'container not found');
+app.patch('/api/spaces/:id', h((req) => {
+  const existing = get('SELECT * FROM spaces WHERE id = ?', id(req));
+  if (!existing) throw new HttpError(404, 'space not found');
 
-  const data = pick(req.body, CONTAINER_FIELDS);
+  const data = pick(req.body, SPACE_FIELDS);
   if (data.parent_id !== undefined && data.parent_id !== null) {
     assertNotDescendant(id(req), Number(data.parent_id));
   }
@@ -146,13 +148,13 @@ app.patch('/api/containers/:id', h((req) => {
     Object.assign(data, spot ?? { x: 0, y: 0 });
   }
 
-  update('containers', id(req), data);
-  return get('SELECT * FROM containers WHERE id = ?', id(req));
+  update('spaces', id(req), data);
+  return get('SELECT * FROM spaces WHERE id = ?', id(req));
 }));
 
-app.delete('/api/containers/:id', h((req) => {
-  const changes = run('DELETE FROM containers WHERE id = ?', id(req)).changes;
-  if (!changes) throw new HttpError(404, 'container not found');
+app.delete('/api/spaces/:id', h((req) => {
+  const changes = run('DELETE FROM spaces WHERE id = ?', id(req)).changes;
+  if (!changes) throw new HttpError(404, 'space not found');
   return { ok: true };
 }));
 
@@ -161,50 +163,50 @@ function assertNotDescendant(nodeId, newParentId) {
   let cursor = newParentId;
   const seen = new Set();
   while (cursor) {
-    if (cursor === nodeId) throw new HttpError(400, 'cannot move a container into itself');
+    if (cursor === nodeId) throw new HttpError(400, 'cannot move a space into itself');
     if (seen.has(cursor)) break;
     seen.add(cursor);
-    cursor = get('SELECT parent_id FROM containers WHERE id = ?', cursor)?.parent_id ?? null;
+    cursor = get('SELECT parent_id FROM spaces WHERE id = ?', cursor)?.parent_id ?? null;
   }
 }
 
-/* ------------------------------------------------------------------ parts */
+/* ------------------------------------------------------------------ items */
 
-app.post('/api/parts', h((req) => {
-  const data = pick(req.body, PART_FIELDS);
+app.post('/api/items', h((req) => {
+  const data = pick(req.body, ITEM_FIELDS);
   if (!data.name) throw new HttpError(400, 'name is required');
-  const newId = insert('parts', data);
-  return get('SELECT * FROM parts WHERE id = ?', newId);
+  const newId = insert('items', data);
+  return get('SELECT * FROM items WHERE id = ?', newId);
 }));
 
-app.patch('/api/parts/:id', h((req) => {
-  if (!get('SELECT id FROM parts WHERE id = ?', id(req))) throw new HttpError(404, 'part not found');
-  update('parts', id(req), pick(req.body, PART_FIELDS));
-  return get('SELECT * FROM parts WHERE id = ?', id(req));
+app.patch('/api/items/:id', h((req) => {
+  if (!get('SELECT id FROM items WHERE id = ?', id(req))) throw new HttpError(404, 'item not found');
+  update('items', id(req), pick(req.body, ITEM_FIELDS));
+  return get('SELECT * FROM items WHERE id = ?', id(req));
 }));
 
-app.delete('/api/parts/:id', h((req) => {
-  const changes = run('DELETE FROM parts WHERE id = ?', id(req)).changes;
-  if (!changes) throw new HttpError(404, 'part not found');
+app.delete('/api/items/:id', h((req) => {
+  const changes = run('DELETE FROM items WHERE id = ?', id(req)).changes;
+  if (!changes) throw new HttpError(404, 'item not found');
   return { ok: true };
 }));
 
-/* ------------------------------------------------------------------ stock */
+/* --------------------------------------------------------------- holdings */
 
 /**
- * Every part gets a slot on its container's grid — you always know how much room
+ * Every item gets a slot on its space's grid — you always know how much room
  * something takes up, even in a box that is not really organised. This finds the
- * first cell no child container and no other part already claims.
+ * first cell no child space and no other holding already claims.
  *
- * Returns null only when the grid is genuinely full; the part is still stored,
+ * Returns null only when the grid is genuinely full; the item is still stored,
  * it just has nowhere of its own and the UI lists it instead of drawing it.
  */
-function firstFreeCell(containerId, spanW = 1, spanH = 1) {
-  const container = get('SELECT cols, rows FROM containers WHERE id = ?', containerId);
-  if (!container) return null;
+function firstFreeCell(spaceId, spanW = 1, spanH = 1) {
+  const space = get('SELECT cols, rows FROM spaces WHERE id = ?', spaceId);
+  if (!space) return null;
 
-  const cols = Math.max(Number(container.cols) || 1, 1);
-  const rows = Math.max(Number(container.rows) || 1, 1);
+  const cols = Math.max(Number(space.cols) || 1, 1);
+  const rows = Math.max(Number(space.rows) || 1, 1);
   const taken = new Uint8Array(cols * rows);
 
   const claim = (x, y, w, h) => {
@@ -215,14 +217,14 @@ function firstFreeCell(containerId, spanW = 1, spanH = 1) {
     for (let j = y0; j < y1; j++) for (let i = x0; i < x1; i++) taken[j * cols + i] = 1;
   };
 
-  for (const c of all('SELECT x, y, w, h FROM containers WHERE parent_id = ?', containerId)) {
+  for (const c of all('SELECT x, y, w, h FROM spaces WHERE parent_id = ?', spaceId)) {
     claim(c.x, c.y, c.w, c.h);
   }
-  for (const s of all(
-    'SELECT x, y, w, h FROM stock WHERE container_id = ? AND x IS NOT NULL',
-    containerId
+  for (const holding of all(
+    'SELECT x, y, w, h FROM holdings WHERE space_id = ? AND x IS NOT NULL',
+    spaceId
   )) {
-    claim(s.x, s.y, s.w, s.h);
+    claim(holding.x, holding.y, holding.w, holding.h);
   }
 
   // Something being re-parented keeps its own size, so look for a gap that fits.
@@ -242,114 +244,183 @@ function firstFreeCell(containerId, spanW = 1, spanH = 1) {
   return null;
 }
 
-// Upsert. Accepts either an existing part_id or a bare `name`, so the UI can
+// Upsert. Accepts either an existing item_id or a bare `name`, so the UI can
 // offer "type a name into this drawer" without a separate catalogue step.
-app.post('/api/stock', h((req) => tx(() => {
-  let partId = req.body.part_id ? Number(req.body.part_id) : null;
-  const containerId = Number(req.body.container_id);
-  // Not `!containerId`: id 0 is the client's synthetic root, so a genuine
-  // attempt to put something at the top level used to fail claiming the id was
-  // missing. Say what is actually wrong instead.
-  if (!Number.isFinite(containerId) || containerId <= 0) {
+app.post('/api/holdings', h((req) => tx(() => {
+  let itemId = req.body.item_id ? Number(req.body.item_id) : null;
+  const spaceId = Number(req.body.space_id);
+  // Not `!spaceId`: id 0 is the client's synthetic root, so a genuine attempt to
+  // put something at the top level used to fail claiming the id was missing.
+  // Say what is actually wrong instead.
+  if (!Number.isFinite(spaceId) || spaceId <= 0) {
     throw new HttpError(400, 'a real place is required — the top level is not one');
   }
-  if (!get('SELECT id FROM containers WHERE id = ?', containerId)) {
+  if (!get('SELECT id FROM spaces WHERE id = ?', spaceId)) {
     throw new HttpError(404, 'that place no longer exists');
   }
 
-  if (!partId) {
+  if (!itemId) {
     const name = String(req.body.name || '').trim();
-    if (!name) throw new HttpError(400, 'part_id or name is required');
-    const existing = get('SELECT id FROM parts WHERE name = ? COLLATE NOCASE', name);
-    partId = existing ? existing.id : insert('parts', pick({ ...req.body, name }, PART_FIELDS));
+    if (!name) throw new HttpError(400, 'item_id or name is required');
+    const existing = get('SELECT id FROM items WHERE name = ? COLLATE NOCASE', name);
+    itemId = existing ? existing.id : insert('items', pick({ ...req.body, name }, ITEM_FIELDS));
   }
 
   const qty = req.body.qty === undefined ? 0 : Number(req.body.qty);
   let slot = pick(req.body, ['x', 'y', 'w', 'h']);
 
-  const prior = get('SELECT * FROM stock WHERE part_id = ? AND container_id = ?', partId, containerId);
+  const prior = get('SELECT * FROM holdings WHERE item_id = ? AND space_id = ?', itemId, spaceId);
   if (prior) {
-    // Already stocked here: add to the count, and move it if a slot was given.
-    update('stock', prior.id, { qty: prior.qty + qty, note: req.body.note ?? prior.note, ...slot });
-    return get('SELECT * FROM stock WHERE id = ?', prior.id);
+    // Already held here: add to the count, and move it if a slot was given.
+    update('holdings', prior.id, { qty: prior.qty + qty, note: req.body.note ?? prior.note, ...slot });
+    return get('SELECT * FROM holdings WHERE id = ?', prior.id);
   }
 
   // No slot asked for: take the next free cell, so nothing arrives unplaced.
-  if (slot.x == null || slot.y == null) slot = firstFreeCell(containerId) ?? {};
+  if (slot.x == null || slot.y == null) slot = firstFreeCell(spaceId) ?? {};
 
-  const newId = insert('stock', {
-    part_id: partId,
-    container_id: containerId,
+  const newId = insert('holdings', {
+    item_id: itemId,
+    space_id: spaceId,
     qty,
     note: req.body.note ?? null,
     ...slot,
   });
-  return get('SELECT * FROM stock WHERE id = ?', newId);
+  return get('SELECT * FROM holdings WHERE id = ?', newId);
 })));
 
-app.patch('/api/stock/:id', h((req) => {
-  const prior = get('SELECT * FROM stock WHERE id = ?', id(req));
-  if (!prior) throw new HttpError(404, 'stock not found');
+app.patch('/api/holdings/:id', h((req) => {
+  const prior = get('SELECT * FROM holdings WHERE id = ?', id(req));
+  if (!prior) throw new HttpError(404, 'holding not found');
 
-  const data = pick(req.body, STOCK_FIELDS);
-  // Moved to a different container without being told where: the old slot means
+  const data = pick(req.body, HOLDING_FIELDS);
+  // Moved to a different space without being told where: the old slot means
   // nothing there, so find it a new one.
-  const moving = data.container_id != null && Number(data.container_id) !== prior.container_id;
+  const moving = data.space_id != null && Number(data.space_id) !== prior.space_id;
   if (moving && data.x === undefined) {
-    Object.assign(data, firstFreeCell(Number(data.container_id)) ?? { x: null, y: null, w: null, h: null });
+    Object.assign(data, firstFreeCell(Number(data.space_id)) ?? { x: null, y: null, w: null, h: null });
   }
 
-  update('stock', id(req), data);
-  return get('SELECT * FROM stock WHERE id = ?', id(req));
+  update('holdings', id(req), data);
+  return get('SELECT * FROM holdings WHERE id = ?', id(req));
 }));
 
-app.delete('/api/stock/:id', h((req) => {
-  const changes = run('DELETE FROM stock WHERE id = ?', id(req)).changes;
-  if (!changes) throw new HttpError(404, 'stock not found');
+app.delete('/api/holdings/:id', h((req) => {
+  const changes = run('DELETE FROM holdings WHERE id = ?', id(req)).changes;
+  if (!changes) throw new HttpError(404, 'holding not found');
   return { ok: true };
 }));
 
 /* --------------------------------------------------------- backup / restore */
 
-app.get('/api/export', h(() => ({
-  exported_at: new Date().toISOString(),
-  version: 3,
-  workspace: get('SELECT * FROM workspace WHERE id = 1'),
-  types: all('SELECT * FROM storage_types ORDER BY id'),
-  containers: all('SELECT * FROM containers ORDER BY id'),
-  parts: all('SELECT * FROM parts ORDER BY id'),
-  stock: all('SELECT * FROM stock ORDER BY id'),
-})));
+/**
+ * A dump carries both vocabularies.
+ *
+ * The new keys are what this version reads. The old ones — `containers`,
+ * `parts`, `stock` — are written alongside them so that a backup taken here can
+ * still be restored into a copy of the app that predates the rename. Without
+ * that, restoring a new dump into an old build would find no `containers` key,
+ * read it as an empty list, and wipe everything while reporting success. The
+ * duplication costs a few kilobytes and removes an entire way to lose data.
+ *
+ * Drop the aliases once no old build is left anywhere.
+ */
+app.get('/api/export', h(() => {
+  const rootSpace = get('SELECT * FROM root_space WHERE id = 1');
+  const types = all('SELECT * FROM space_types ORDER BY id');
+  const spaces = all('SELECT * FROM spaces ORDER BY id');
+  const items = all('SELECT * FROM items ORDER BY id');
+  const holdings = all('SELECT * FROM holdings ORDER BY id');
 
-// Replaces everything. Original ids are preserved so parent/child and stock
+  return {
+    exported_at: new Date().toISOString(),
+    version: 4,
+    rootSpace,
+    types,
+    spaces,
+    items,
+    holdings,
+    // Which one-way migrations this data has already been through. Without it a
+    // restore cannot tell a database that predates locations from one whose
+    // locations are simply its top level, and would "migrate" the second by
+    // pushing every location down a level.
+    meta: all('SELECT key, value FROM meta ORDER BY key'),
+    /* read by builds from before the rename */
+    workspace: rootSpace,
+    containers: spaces,
+    parts: items,
+    stock: holdings.map(({ item_id, space_id, ...rest }) => ({
+      ...rest,
+      part_id: item_id,
+      container_id: space_id,
+    })),
+  };
+}));
+
+/**
+ * The reverse: accept either vocabulary, so a backup taken before the rename
+ * restores unchanged. Moving this database between machines is done with these
+ * two endpoints, so the old shape has to keep working.
+ */
+function readDump(body) {
+  const d = body || {};
+  const holdings = d.holdings ?? d.stock ?? [];
+  return {
+    rootSpace: d.rootSpace ?? d.workspace ?? null,
+    types: d.types,
+    spaces: d.spaces ?? d.containers ?? [],
+    items: d.items ?? d.parts ?? [],
+    holdings: holdings.map((row) => ({
+      ...row,
+      item_id: row.item_id ?? row.part_id,
+      space_id: row.space_id ?? row.container_id,
+    })),
+    meta: Array.isArray(d.meta) ? d.meta : null,
+  };
+}
+
+// Replaces everything. Original ids are preserved so parent/child and holding
 // references in the dump stay valid.
 app.post('/api/import', h((req) => tx(() => {
-  const { workspace, types, containers = [], parts = [], stock = [] } = req.body || {};
-  if (workspace) update('workspace', 1, pick(workspace, WORKSPACE_FIELDS));
+  const { rootSpace, types, spaces, items, holdings, meta } = readDump(req.body);
+  if (rootSpace) update('root_space', 1, pick(rootSpace, ROOT_SPACE_FIELDS));
   // A child may appear before its parent in the dump; check references at commit.
   db.exec('PRAGMA defer_foreign_keys = ON');
-  run('DELETE FROM stock');
-  run('DELETE FROM parts');
-  run('DELETE FROM containers');
+  run('DELETE FROM holdings');
+  run('DELETE FROM items');
+  run('DELETE FROM spaces');
   // A dump without a `types` key predates them — keep the ones already defined
-  // rather than leaving the database with no storage types at all.
+  // rather than leaving the database with no space types at all.
   if (Array.isArray(types)) {
-    run('DELETE FROM storage_types');
-    for (const t of types) insert('storage_types', { id: t.id, ...pick(t, TYPE_FIELDS) });
+    run('DELETE FROM space_types');
+    for (const t of types) insert('space_types', { id: t.id, ...pick(t, TYPE_FIELDS) });
   }
-  for (const c of containers) insert('containers', { id: c.id, ...pick(c, CONTAINER_FIELDS) });
-  for (const p of parts) insert('parts', { id: p.id, ...pick(p, PART_FIELDS) });
-  for (const s of stock) insert('stock', { id: s.id, ...pick(s, STOCK_FIELDS) });
-  // A dump taken before locations has spaces at the top and nothing to hold
-  // them. Restoring one is the normal way to move this database between
-  // machines, so it gets the same migration a startup would have applied.
-  run("DELETE FROM meta WHERE key = 'locations'");
+  for (const s of spaces) insert('spaces', { id: s.id, ...pick(s, SPACE_FIELDS) });
+  for (const i of items) insert('items', { id: i.id, ...pick(i, ITEM_FIELDS) });
+  for (const holding of holdings) {
+    insert('holdings', { id: holding.id, ...pick(holding, HOLDING_FIELDS) });
+  }
+  // Which migrations the *dump* has been through, which is not necessarily what
+  // this database has been through — restoring replaces the data, so it replaces
+  // that history too.
+  //
+  // A dump with no `meta` at all predates the idea, and therefore predates
+  // locations: its top-level spaces are furniture with nothing to hold them, so
+  // it gets the migration a startup would have applied. A dump that carries
+  // `meta` says for itself whether that has already happened. Running it anyway
+  // would push every location down a level, one level per restore.
+  run('DELETE FROM meta');
+  if (meta) {
+    for (const row of meta) {
+      if (row && row.key != null) run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', String(row.key), String(row.value ?? ''));
+    }
+  }
   ensureLocationInTransaction();
   return {
     types: Array.isArray(types) ? types.length : 'kept',
-    containers: containers.length,
-    parts: parts.length,
-    stock: stock.length,
+    spaces: spaces.length,
+    items: items.length,
+    holdings: holdings.length,
   };
 })));
 

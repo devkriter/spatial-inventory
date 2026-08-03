@@ -1,17 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { size } from '../layout';
-import { PART_NAME_LIST } from './PartNames';
-import type { Rect, StorageType, UnitRect } from '../types';
+import { ITEM_NAME_LIST } from './ItemNames';
+import type { Rect, SpaceType, UnitRect } from '../types';
 
 export interface DrawPromptProps {
   /** The rectangle just drawn, in the parent's units. */
   rect: UnitRect;
   /** Where that rectangle landed on screen, so the prompt can sit beside it. */
   anchor: Rect;
-  types: StorageType[];
+  types: SpaceType[];
   /** False where a holding has nowhere to live — the synthetic root. */
   canHoldItems?: boolean;
-  onCreate: (what: 'container' | 'part', name: string, typeId: number | null, qty: number) => void;
+  onCreate: (what: 'space' | 'item', name: string, typeId: number | null, qty: number) => void;
   onCancel: () => void;
 }
 
@@ -20,7 +20,7 @@ export interface DrawPromptProps {
  * Name it, pick a type, Enter. Fast enough to fill a 12×12 cabinet in one go.
  */
 export function DrawPrompt({ rect, anchor, types, canHoldItems, onCreate, onCancel }: DrawPromptProps) {
-  const [what, setWhat] = useState<'container' | 'part'>('container');
+  const [what, setWhat] = useState<'space' | 'item'>('space');
   const [name, setName] = useState('');
   const [typeId, setTypeId] = useState<string>('');
   const [qty, setQty] = useState('1');
@@ -86,10 +86,10 @@ export function DrawPrompt({ rect, anchor, types, canHoldItems, onCreate, onCanc
       </div>
       {canHoldItems !== false && (
         <div className="segmented dp-what">
-          <button className={what === 'container' ? 'on' : ''} onClick={() => setWhat('container')}>
+          <button className={what === 'space' ? 'on' : ''} onClick={() => setWhat('space')}>
             Space
           </button>
-          <button className={what === 'part' ? 'on' : ''} onClick={() => setWhat('part')}>
+          <button className={what === 'item' ? 'on' : ''} onClick={() => setWhat('item')}>
             Item
           </button>
         </div>
@@ -97,17 +97,17 @@ export function DrawPrompt({ rect, anchor, types, canHoldItems, onCreate, onCanc
 
       <input
         ref={input}
-        placeholder={what === 'part' ? 'Item name' : 'Name it'}
+        placeholder={what === 'item' ? 'Item name' : 'Name it'}
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={keys}
-        // Offers parts you already have, so the same resistor is never entered
+        // Offers items you already have, so the same resistor is never entered
         // twice under two spellings.
-        list={what === 'part' ? PART_NAME_LIST : undefined}
+        list={what === 'item' ? ITEM_NAME_LIST : undefined}
         autoComplete="off"
       />
 
-      {what === 'part' ? (
+      {what === 'item' ? (
         <input
           type="number"
           placeholder="Quantity"

@@ -1,15 +1,15 @@
 export type Layout = 'grid' | 'free';
 export type RowOrigin = 'top' | 'bottom';
 
-/** The synthetic top-level node that holds everything else. */
-export const WORLD_ID = 0;
+/** The synthetic top-level node that holds every location. */
+export const ROOT_ID = 0;
 
 /**
- * The top level. Not a container row — there is exactly one and it has no
- * parent — but it has the same grid, so closets and benches can be placed
- * against each other just like drawers inside a cabinet.
+ * The level above the locations. Not a `spaces` row — there is exactly one and
+ * it has no parent — but it has the same grid, so the client has one uniform
+ * thing to lay out however high up you are.
  */
-export interface Workspace {
+export interface RootSpace {
   id: number;
   name: string;
   layout: Layout;
@@ -19,8 +19,8 @@ export interface Workspace {
   updated_at: string;
 }
 
-/** A user-defined kind of storage. Doubles as the template for new containers. */
-export interface StorageType {
+/** A user-defined kind of space. Doubles as the template for new ones. */
+export interface SpaceType {
   id: number;
   name: string;
   layout: Layout;
@@ -33,7 +33,8 @@ export interface StorageType {
   updated_at: string;
 }
 
-export interface Container {
+/** Anywhere a thing can be. One with no parent is a location. */
+export interface Space {
   id: number;
   parent_id: number | null;
   type_id: number | null;
@@ -43,7 +44,7 @@ export interface Container {
   y: number;
   w: number;
   h: number;
-  /** This container's own interior, in units. */
+  /** This space's own interior, in units. */
   layout: Layout;
   cols: number;
   rows: number;
@@ -55,7 +56,11 @@ export interface Container {
   updated_at: string;
 }
 
-export interface Part {
+/**
+ * A distinct thing you own, independent of where it is. `part_number` is the
+ * manufacturer's, off the datasheet — it is not this app's word for an item.
+ */
+export interface Item {
   id: number;
   name: string;
   description: string | null;
@@ -74,13 +79,14 @@ export interface Part {
   updated_at: string;
 }
 
-export interface Stock {
+/** The stored side of a holding: which item, in which space, how many. */
+export interface HoldingRow {
   id: number;
-  part_id: number;
-  container_id: number;
+  item_id: number;
+  space_id: number;
   qty: number;
   note: string | null;
-  /** Slot on the container's plan-view grid. Null means "loose in here". */
+  /** Slot on the space's plan-view grid. Null means "loose in here". */
   x: number | null;
   y: number | null;
   w: number | null;
@@ -88,34 +94,38 @@ export interface Stock {
 }
 
 export interface State {
-  workspace: Workspace;
-  types: StorageType[];
-  containers: Container[];
-  parts: Part[];
-  stock: Stock[];
+  rootSpace: RootSpace;
+  types: SpaceType[];
+  spaces: Space[];
+  items: Item[];
+  holdings: HoldingRow[];
 }
 
-/** A container plus everything derived from the tree, built once per state load. */
+/** A space plus everything derived from the tree, built once per state load. */
 export interface Node {
-  c: Container;
-  type: StorageType | null;
+  space: Space;
+  type: SpaceType | null;
   children: Node[];
   parent: Node | null;
   depth: number;
-  /** Stock rows held directly by this container, joined to their part. */
-  items: Item[];
-  /** Stock rows here and anywhere below. */
-  totalItems: number;
+  /** Held directly by this space, each joined to its catalogue item. */
+  holdings: Holding[];
+  /** Holdings here and anywhere below. */
+  totalHoldings: number;
   /** Summed quantity here and anywhere below. */
   totalQty: number;
-  /** Containers below, excluding self. */
-  totalContainers: number;
-  path: Container[];
+  /** Spaces below, excluding self. */
+  totalSpaces: number;
+  path: Space[];
 }
 
-export interface Item {
-  stock: Stock;
-  part: Part;
+/**
+ * An item in a space: the stored row joined to the catalogue entry it points
+ * at. The same resistor in two drawers is two holdings of one item.
+ */
+export interface Holding {
+  row: HoldingRow;
+  item: Item;
 }
 
 /** Rectangle in screen pixels, relative to the viewport element. */
@@ -126,7 +136,7 @@ export interface Rect {
   h: number;
 }
 
-/** Rectangle in a container's unit space. */
+/** Rectangle in a space's unit space. */
 export interface UnitRect {
   x: number;
   y: number;

@@ -7,7 +7,7 @@ export interface LabelSpec {
   path?: string;
   /** Its address in its parent, e.g. `R3·C2`. */
   address?: string;
-  /** Encoded into the QR — scanning it should open this container. */
+  /** Encoded into the QR — scanning it should open this space. */
   qrUrl?: string;
 }
 

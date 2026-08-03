@@ -15,7 +15,7 @@ export interface PrinterDialogProps {
 
 /**
  * Everything about the printer and the stock in it — set once, then forgotten.
- * Making individual labels happens from the details panel, per container.
+ * Making individual labels happens from the details panel, per space.
  */
 export function PrinterDialog({ settings, onChange, onClose }: PrinterDialogProps) {
   const [tasks, setTasks] = useState<string[]>([]);

@@ -73,8 +73,8 @@ export const DEFAULT_SETTINGS: Settings = {
   labelShowQr: true,
   // Off by default: a printed address goes stale the moment you rearrange, and
   // a label you have to reprint to move something is worse than no label. The
-  // QR is the durable pointer — it identifies the container, and the app knows
-  // where that container currently is.
+  // QR is the durable pointer — it identifies the space, and the app knows
+  // where that space currently is.
   labelShowAddress: false,
   labelBaseUrl: '',
   printTask: '',

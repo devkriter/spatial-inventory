@@ -10,10 +10,10 @@ import {
 } from '../labels';
 import { bluetoothAvailable, printLabels } from '../niimbot';
 import type { Settings } from '../settings';
-import { WORLD_ID, type Node } from '../types';
+import { ROOT_ID, type Node } from '../types';
 
 export interface LabelDialogProps {
-  /** The container the labels are for, plus the option of doing its children. */
+  /** The space the labels are for, plus the option of doing its children. */
   node: Node;
   settings: Settings;
   onOpenPrinter: () => void;
@@ -23,7 +23,7 @@ export interface LabelDialogProps {
 type Scope = 'self' | 'children';
 
 export function LabelDialog({ node, settings, onOpenPrinter, onClose }: LabelDialogProps) {
-  const canPrintSelf = node.c.id !== WORLD_ID;
+  const canPrintSelf = node.space.id !== ROOT_ID;
   const [scope, setScope] = useState<Scope>(canPrintSelf ? 'self' : 'children');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -44,11 +44,11 @@ export function LabelDialog({ node, settings, onOpenPrinter, onClose }: LabelDia
   const origin = labelOrigin(settings.labelBaseUrl);
   const targets = scope === 'self' ? [node] : node.children;
   const specs: LabelSpec[] = targets.map((t) => ({
-    title: t.c.name,
+    title: t.space.name,
     path: t.path.slice(0, -1).map((c) => c.name).join(' › ') || 'Workshop',
-    address: t.parent ? cellAddress(t.parent.c, t.c) ?? undefined : undefined,
-    // Scanning the label opens the app right at this container.
-    qrUrl: `${origin}/?go=${t.c.id}`,
+    address: t.parent ? cellAddress(t.parent.space, t.space) ?? undefined : undefined,
+    // Scanning the label opens the app right at this space.
+    qrUrl: `${origin}/?go=${t.space.id}`,
   }));
 
   // Re-render the previews whenever anything about them changes.
@@ -64,7 +64,7 @@ export function LabelDialog({ node, settings, onOpenPrinter, onClose }: LabelDia
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    scope, node.c.id, node.children.length, origin,
+    scope, node.space.id, node.children.length, origin,
     style.widthMm, style.heightMm, style.dpi, style.showPath, style.showAddress, style.showQr,
   ]);
 
@@ -125,7 +125,7 @@ export function LabelDialog({ node, settings, onOpenPrinter, onClose }: LabelDia
               disabled={!canPrintSelf}
               onClick={() => setScope('self')}
             >
-              Just {node.c.name}
+              Just {node.space.name}
             </button>
             <button className={scope === 'children' ? 'on' : ''} onClick={() => setScope('children')}>
               Everything inside ({node.children.length})

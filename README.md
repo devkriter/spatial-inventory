@@ -64,7 +64,7 @@ printed at `localhost`**, which points at the phone itself. See Labels.
 ## The model
 
 Everything is measured in **units (U)** — abstract squares, not millimetres.
-Finding a part does not need millimetres; it needs to know the thing you want is
+Finding an item does not need millimetres; it needs to know the thing you want is
 the third drawer down on the left.
 
 | | |
@@ -201,6 +201,12 @@ levels are drawn at once and the delete confirmation.
 and **replaces everything** currently stored, after confirming. Ids are
 preserved, so a dump restores exactly.
 
+Restore accepts a backup taken before the Space / Item / Holding rename, and a
+backup taken now still carries the old `containers` / `parts` / `stock` keys
+alongside the new ones. Without those, restoring a current dump into a copy of
+the app that predates the rename would find no `containers`, read it as empty,
+and wipe everything while reporting success.
+
 ## Code
 
 ```
@@ -225,5 +231,10 @@ whichever one they actually mean. The CSS breakpoint and `PHONE_QUERY` must be
 kept in step by hand, and anything about fingertips belongs in the
 `(pointer: coarse)` block rather than the width one.
 
-**Naming:** the interface says Space / Item / Holding. The code and database
-still say `container` / `part` / `stock`; that rename is pending.
+**Naming:** Space / Item / Holding all the way down — the interface, the code,
+the API routes and the tables. A database written before that is renamed in place
+on the first start, which is detectable from the schema itself and so needs no
+marker: if a `containers` table is there, the migration has not run. It happens
+before `schema.sql`, because `CREATE TABLE IF NOT EXISTS` would otherwise make an
+empty `spaces` alongside the populated `containers` and every query would read
+the empty one.

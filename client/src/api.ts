@@ -1,4 +1,4 @@
-import type { Container, Part, State, Stock, StorageType, Workspace } from './types';
+import type { HoldingRow, Item, RootSpace, Space, SpaceType, State } from './types';
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -16,30 +16,29 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 export const api = {
   state: () => request<State>('GET', '/api/state'),
 
-  updateWorkspace: (data: Partial<Workspace>) =>
-    request<Workspace>('PATCH', '/api/workspace', data),
+  updateRootSpace: (data: Partial<RootSpace>) =>
+    request<RootSpace>('PATCH', '/api/root-space', data),
 
-  createType: (data: Partial<StorageType>) => request<StorageType>('POST', '/api/types', data),
-  updateType: (id: number, data: Partial<StorageType>) =>
-    request<StorageType>('PATCH', `/api/types/${id}`, data),
-  deleteType: (id: number) => request<void>('DELETE', `/api/types/${id}`),
+  createType: (data: Partial<SpaceType>) => request<SpaceType>('POST', '/api/space-types', data),
+  updateType: (id: number, data: Partial<SpaceType>) =>
+    request<SpaceType>('PATCH', `/api/space-types/${id}`, data),
+  deleteType: (id: number) => request<void>('DELETE', `/api/space-types/${id}`),
 
-  createContainer: (data: Partial<Container>) =>
-    request<Container>('POST', '/api/containers', data),
-  updateContainer: (id: number, data: Partial<Container>) =>
-    request<Container>('PATCH', `/api/containers/${id}`, data),
-  deleteContainer: (id: number) => request<void>('DELETE', `/api/containers/${id}`),
+  createSpace: (data: Partial<Space>) => request<Space>('POST', '/api/spaces', data),
+  updateSpace: (id: number, data: Partial<Space>) =>
+    request<Space>('PATCH', `/api/spaces/${id}`, data),
+  deleteSpace: (id: number) => request<void>('DELETE', `/api/spaces/${id}`),
 
-  createPart: (data: Partial<Part>) => request<Part>('POST', '/api/parts', data),
-  updatePart: (id: number, data: Partial<Part>) => request<Part>('PATCH', `/api/parts/${id}`, data),
-  deletePart: (id: number) => request<void>('DELETE', `/api/parts/${id}`),
+  createItem: (data: Partial<Item>) => request<Item>('POST', '/api/items', data),
+  updateItem: (id: number, data: Partial<Item>) => request<Item>('PATCH', `/api/items/${id}`, data),
+  deleteItem: (id: number) => request<void>('DELETE', `/api/items/${id}`),
 
-  /** Adds `qty` to an existing row, or creates the part and the row. */
-  addStock: (data: { container_id: number; part_id?: number; name?: string; qty?: number; note?: string }) =>
-    request<Stock>('POST', '/api/stock', data),
-  updateStock: (id: number, data: Partial<Stock>) =>
-    request<Stock>('PATCH', `/api/stock/${id}`, data),
-  deleteStock: (id: number) => request<void>('DELETE', `/api/stock/${id}`),
+  /** Adds `qty` to an existing holding, or creates the item and the holding. */
+  addHolding: (data: { space_id: number; item_id?: number; name?: string; qty?: number; note?: string }) =>
+    request<HoldingRow>('POST', '/api/holdings', data),
+  updateHolding: (id: number, data: Partial<HoldingRow>) =>
+    request<HoldingRow>('PATCH', `/api/holdings/${id}`, data),
+  deleteHolding: (id: number) => request<void>('DELETE', `/api/holdings/${id}`),
 
   exportAll: () => request<unknown>('GET', '/api/export'),
   importAll: (dump: unknown) => request<unknown>('POST', '/api/import', dump),
