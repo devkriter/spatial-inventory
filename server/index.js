@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { db, all, get, run, tx, driver, dbPath, checkpointAndClose, snapshot } from './db.js';
+import {
+  db, all, get, run, tx, driver, dbPath, checkpointAndClose, snapshot,
+  ensureLocation, ensureLocationInTransaction,
+} from './db.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
@@ -329,6 +332,11 @@ app.post('/api/import', h((req) => tx(() => {
   for (const c of containers) insert('containers', { id: c.id, ...pick(c, CONTAINER_FIELDS) });
   for (const p of parts) insert('parts', { id: p.id, ...pick(p, PART_FIELDS) });
   for (const s of stock) insert('stock', { id: s.id, ...pick(s, STOCK_FIELDS) });
+  // A dump taken before locations has spaces at the top and nothing to hold
+  // them. Restoring one is the normal way to move this database between
+  // machines, so it gets the same migration a startup would have applied.
+  run("DELETE FROM meta WHERE key = 'locations'");
+  ensureLocationInTransaction();
   return {
     types: Array.isArray(types) ? types.length : 'kept',
     containers: containers.length,

@@ -61,6 +61,67 @@ db.exec(fs.readFileSync(path.join(here, 'schema.sql'), 'utf8'));
 addMissingColumns();
 seedStorageTypes();
 seedWorkspace();
+ensureLocation();
+
+/**
+ * The top level used to be a single implicit workshop: the `workspace` row
+ * supplied a grid, and everything with no parent sat directly on it. Locations
+ * make that explicit — the things with no parent are now *locations*, and the
+ * spaces that used to be top-level live inside one.
+ *
+ * A database from before that has spaces at the top and no location to hold
+ * them, so one is made and they move into it. The location inherits the
+ * workspace grid as its own interior, which is the grid those spaces were
+ * already positioned in, so every rectangle keeps the coordinates it had.
+ *
+ * Idempotent, and deliberately called from two places: at startup, and again
+ * after an import. Restoring a backup taken before locations would otherwise
+ * load pre-locations data into a locations-aware app and leave it with none —
+ * and restoring a backup is the normal way to move this database about.
+ */
+export function ensureLocation() {
+  if (!needsLocation()) return;
+  tx(migrateToLocations);
+}
+
+/**
+ * The same migration for a caller that is already inside a transaction —
+ * importing a dump, which must not half-apply. SQLite has no nested BEGIN, so
+ * the transaction has to belong to exactly one of them.
+ */
+export function ensureLocationInTransaction() {
+  if (!needsLocation()) return;
+  migrateToLocations();
+}
+
+function needsLocation() {
+  const { n } = get('SELECT COUNT(*) AS n FROM containers WHERE parent_id IS NULL');
+  if (Number(n) === 0) return false; // nothing to move
+  // Before and after look alike — spaces with no parent either way — so this
+  // cannot be detected from the shape of the data. A marker row it is.
+  return !get("SELECT value FROM meta WHERE key = 'locations'");
+}
+
+function migrateToLocations() {
+  const ws = get('SELECT * FROM workspace WHERE id = 1') || {};
+  const name = ws.name || 'Workshop';
+  const made = run(
+    `INSERT INTO containers (parent_id, type_id, name, x, y, w, h, layout, cols, rows, row_origin, sort)
+     VALUES (NULL, NULL, ?, 0, 0, 6, 5, ?, ?, ?, ?, 0)`,
+    name,
+    ws.layout || 'grid',
+    ws.cols || 24,
+    ws.rows || 16,
+    ws.row_origin || 'top'
+  );
+  const moved = run(
+    'UPDATE containers SET parent_id = ? WHERE parent_id IS NULL AND id <> ?',
+    made.lastInsertRowid,
+    made.lastInsertRowid
+  );
+  run("INSERT OR REPLACE INTO meta (key, value) VALUES ('locations', '1')");
+  console.log(`locations: created "${name}" and moved ${moved.changes} space(s) into it`);
+}
 
 /**
  * `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists, so

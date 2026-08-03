@@ -13,6 +13,7 @@ import { PrinterDialog } from './components/PrinterDialog';
 import { PartNames } from './components/PartNames';
 import { Walkthrough, hasSeenWalkthrough, markWalkthroughSeen } from './components/Walkthrough';
 import { MobileMenu } from './components/MobileMenu';
+import { LocationMenu } from './components/LocationMenu';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { useAnyTouch, usePhone, useTouch } from './mobile';
 import {
@@ -82,7 +83,7 @@ export default function App() {
    * buried. They start closed and are opened by hand, or by the selection.
    */
   const [treeOpen, setTreeOpen] = useState(false);
-  const [sheet, setSheet] = useState<'hidden' | 'peek' | 'full'>('hidden');
+  const [sheet, setSheet] = useState<'bar' | 'full'>('bar');
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   /**
@@ -113,14 +114,14 @@ export default function App() {
   }, [settings.uiScale]);
 
   const showTree = phone ? treeOpen : settings.showTree;
-  const showDetails = phone ? sheet !== 'hidden' : settings.showDetails;
+  const showDetails = phone || settings.showDetails;
   /**
    * Make sure the details are visible, whichever form they take here. Already
    * open is left alone — nudging an expanded sheet back down to a peek, or
    * rewriting the settings on every click, would both be worse than nothing.
    */
   const openDetails = useCallback(() => {
-    if (phone) setSheet((s) => (s === 'hidden' ? 'peek' : s));
+    if (phone) setSheet('full');
     else if (!settings.showDetails) changeSettings({ showDetails: true });
   }, [phone, settings.showDetails, changeSettings]);
 
@@ -177,13 +178,14 @@ export default function App() {
     window.history.pushState({ rootId }, '');
   }, [rootId]);
 
-  // On a phone the details are a sheet lying over the map, so they follow the
-  // selection: something selected means there is something to say, nothing
-  // selected means give the map its screen back.
+  // Deselecting collapses an open sheet — it was describing the thing you just
+  // let go of. Selecting does *not* open it: the band already names what is
+  // selected, and a sheet leaping over the map on every tap is what made the
+  // old peek state so costly.
   useEffect(() => {
     if (!phone) return;
     const anything = selectedId != null || selectedStockId != null || displacedId != null;
-    setSheet((s) => (anything ? (s === 'hidden' ? 'peek' : s) : 'hidden'));
+    if (!anything) setSheet('bar');
   }, [phone, selectedId, selectedStockId, displacedId]);
 
   // Any mutation just refetches: the dataset is small and this keeps the tree,
@@ -205,8 +207,22 @@ export default function App() {
     [state]
   );
   const world = tree.world;
-  const root = tree.byId.get(rootId) ?? world;
   const types = state?.types ?? [];
+
+  /**
+   * Locations are the spaces with nothing above them: a workshop, a bedroom, a
+   * lock-up across town. Each is a tree in its own right, reached from the
+   * switcher rather than by navigating — there is no floor plan of the world,
+   * and pretending there is would put a level in the way of every trip.
+   */
+  const locations = world.children;
+  // Never stand on the synthetic root. If nothing sensible is selected — first
+  // load, or the location you were in has been deleted — fall into the first.
+  const standingOn = tree.byId.get(rootId);
+  const root =
+    standingOn && standingOn.c.id !== WORLD_ID ? standingOn : locations[0] ?? world;
+  /** The location the current level belongs to, for the switcher's label. */
+  const location = root.path.length ? tree.byId.get(root.path[0].id) ?? root : root;
 
   const searching = query.trim().length > 0;
   const result = useMemo(
@@ -271,7 +287,10 @@ export default function App() {
   const up = useCallback(() => {
     setSelectedId(null);
     setSelectedStockId(null);
-    setRootId(root.parent ? root.parent.c.id : WORLD_ID);
+    // A location is the top of its own tree; above it is the switcher, not a
+    // level, so Back stops here rather than surfacing on a synthetic root.
+    if (!root.parent || root.parent.c.id === WORLD_ID) return;
+    setRootId(root.parent.c.id);
   }, [root]);
 
   const closeTour = useCallback(() => {
@@ -419,7 +438,10 @@ export default function App() {
     );
   }
 
-  const crumbs: Node[] = [world];
+  // The crumb trail starts at the location, not above it. Locations are picked
+  // from the switcher in its place — each is its own tree, and stacking them
+  // under a synthetic root would add a level that leads nowhere useful.
+  const crumbs: Node[] = [];
   for (const c of root.path) {
     const node = tree.byId.get(c.id);
     if (node) crumbs.push(node);
@@ -466,12 +488,19 @@ export default function App() {
               ←
             </button>
 
-            {/* Only the tail of the path fits, and it is the useful end: where
-                you are, and the one step above it. */}
+            <LocationMenu
+              locations={locations}
+              current={location}
+              onPick={open}
+              onCreate={() => setDialog({ parent: world })}
+            />
+
+            {/* Only the tail of the trail below the location fits, and it is
+                the useful end: where you are, and the step above it. */}
             <nav className="crumbs">
-              {crumbs.slice(-2).map((node, i, shown) => (
+              {crumbs.slice(1).slice(-2).map((node, i, shown) => (
                 <span key={node.c.id} style={{ display: 'contents' }}>
-                  {(i > 0 || crumbs.length > shown.length) && <span className="crumb-sep">›</span>}
+                  <span className="crumb-sep">›</span>
                   <button
                     className={i === shown.length - 1 ? 'crumb current' : 'crumb'}
                     onClick={() => open(node)}
@@ -530,12 +559,19 @@ export default function App() {
               ← Back
             </button>
 
+            <LocationMenu
+              locations={locations}
+              current={location}
+              onPick={open}
+              onCreate={() => setDialog({ parent: world })}
+            />
+
             <nav className="crumbs">
-              {crumbs.map((node, i) => (
+              {crumbs.slice(1).map((node, i, trail) => (
                 <span key={node.c.id} style={{ display: 'contents' }}>
-                  {i > 0 && <span className="crumb-sep">›</span>}
+                  <span className="crumb-sep">›</span>
                   <button
-                    className={i === crumbs.length - 1 ? 'crumb current' : 'crumb'}
+                    className={i === trail.length - 1 ? 'crumb current' : 'crumb'}
                     onClick={() => open(node)}
                   >
                     {node.c.name}
@@ -636,6 +672,7 @@ export default function App() {
         <TreePanel
           tree={tree}
           root={root}
+          location={location}
           selectedId={selectedId}
           selectedStockId={selectedStockId}
           displaced={displaced}
@@ -727,7 +764,7 @@ export default function App() {
           sheet={phone}
           onHeight={setSheetHeight}
           expanded={sheet === 'full'}
-          onToggleHeight={() => setSheet((s) => (s === 'full' ? 'peek' : 'full'))}
+          onToggleHeight={() => setSheet((s) => (s === 'full' ? 'bar' : 'full'))}
           tree={tree}
           onClose={() => {
             if (!phone) {
@@ -737,7 +774,7 @@ export default function App() {
             // Dismissing the sheet drops the selection with it. Leaving it
             // behind would mean tapping the same block again changed nothing,
             // so the sheet would refuse to come back.
-            setSheet('hidden');
+            setSheet('bar');
             setSelectedId(null);
             setSelectedStockId(null);
             setDisplacedId(null);

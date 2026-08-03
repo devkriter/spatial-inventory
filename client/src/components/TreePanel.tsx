@@ -11,6 +11,12 @@ export interface TreePanelProps {
   tree: Tree;
   /** The level currently on screen, so it can be marked and revealed. */
   root: Node;
+  /**
+   * The location the tree is showing. Each location is a tree in its own right,
+   * so only one is ever listed — switching between them is the toolbar's job,
+   * and stacking them all here would bury the one you are actually working in.
+   */
+  location: Node;
   selectedId: number | null;
   selectedStockId: number | null;
   /** Parts in the catalogue that are not stored anywhere at all. */
@@ -154,7 +160,7 @@ export function TreePanel(props: TreePanelProps) {
     : displaced;
 
   const rows: ReactNode[] = [];
-  walk(tree.world, { through: [], last: true });
+  walk(props.location, { through: [], last: true });
 
   function walk(node: Node, guides: Guides) {
     if (visible && !visible.has(node.c.id)) return;

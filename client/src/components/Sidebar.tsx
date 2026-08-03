@@ -70,6 +70,23 @@ export function Sidebar(props: SidebarProps) {
       onHeight(0);
     };
   }, [sheet, onHeight]);
+  // Collapsed on a phone this is a band, not a panel: one row naming whatever
+  // is selected, with room for shortcuts alongside it later. The old collapsed
+  // state was 42% of the screen, which is a great deal of map to spend on a
+  // preview of something you can already see.
+  if (sheet && !props.expanded) {
+    const subject = props.displacedPart?.name ?? selected?.part.name ?? props.node.c.name;
+    return (
+      <aside ref={asideRef} className="sidebar sheet band">
+        <button className="band-open" onClick={props.onToggleHeight}>
+          <span className="band-label">Details</span>
+          <span className="band-subject">{subject}</span>
+          <span className="band-caret">▲</span>
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside
       ref={asideRef}
@@ -81,7 +98,7 @@ export function Sidebar(props: SidebarProps) {
         <button
           className="sheet-grab"
           onClick={props.onToggleHeight}
-          aria-label={props.expanded ? 'Shrink this panel' : 'Expand this panel'}
+          aria-label="Collapse to the band"
         />
       )}
       <div className="side-head">

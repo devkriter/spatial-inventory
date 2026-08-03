@@ -18,6 +18,14 @@
 -- has no parent and there is exactly one of it, but it has the same grid, so
 -- closets and benches can be placed against each other the same way drawers are
 -- placed inside a cabinet.
+-- Bookkeeping for one-way migrations. A migration that can be detected by
+-- looking at the data does not need a row here; one that cannot — because the
+-- before and after states are shaped alike — records that it has run.
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS workspace (
   id         INTEGER PRIMARY KEY CHECK (id = 1),
   name       TEXT    NOT NULL DEFAULT 'Workshop',
