@@ -37,9 +37,6 @@ export const ZOOM_STEP = 1.25;
 
 export const clampK = (k: number): number => Math.min(MAX_K, Math.max(MIN_K, k));
 
-export const atRest = (v: View): boolean =>
-  Math.abs(v.k - 1) < 0.005 && Math.abs(v.x) < 0.5 && Math.abs(v.y) < 0.5;
-
 /** The rectangle the level should be laid out into at this zoom and pan. */
 export const stageFor = (base: Rect, v: View): Rect => ({
   x: base.x + v.x,

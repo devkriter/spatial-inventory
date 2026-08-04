@@ -71,7 +71,17 @@ export function Sidebar(props: SidebarProps) {
       onHeight(0);
       return;
     }
-    const report = () => onHeight(el.getBoundingClientRect().height);
+    // How much of the map's *bottom* this covers, which is its height only
+    // while it is actually docked across the bottom. Held sideways the same
+    // element becomes a full-height panel down one side, and reporting that
+    // told the map three quarters of its height was hidden when none of it
+    // was — pinning the level to the top and letting panning push it off.
+    const report = () => {
+      const r = el.getBoundingClientRect();
+      const acrossTheBottom =
+        r.left <= 1 && r.right >= window.innerWidth - 1 && r.bottom >= window.innerHeight - 1;
+      onHeight(acrossTheBottom ? r.height : 0);
+    };
     report();
     const observer = new ResizeObserver(report);
     observer.observe(el);

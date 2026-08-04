@@ -480,6 +480,10 @@ button, input, select, textarea {
   opacity: .75;
   white-space: nowrap;
   overflow: hidden;
+  /* Both are flex children, so a name long enough to wrap was stealing the
+     meta line's height and leaving it drawn at half a glyph. The name has a
+     line clamp and can afford to give; the one-line meta cannot. */
+  flex: none;
 }
 
 .block-label.tiny .name { font-size: 12px; -webkit-line-clamp: 2; }
@@ -1391,6 +1395,11 @@ kbd {
   .btn { padding: 8px 12px; }
   .btn.ghost { padding: 8px 10px; }
   .segmented button { padding: 9px 12px; }
+  /* The switcher is how you get between locations and it was the smallest
+     target in the toolbar — 27px tall, because it is not a `.btn` and so was
+     missed by the rule above. The bar already reserves 44px of height. */
+  .loc-button { padding: 10px; }
+  .loc-rename { min-width: 38px; min-height: 38px; }
   .tree-row { min-height: 34px; }
   .t-box { padding: 5px 8px; }
   .t-box .twisty { width: 26px; height: 26px; font-size: calc(15px * var(--ui)); margin-left: -5px; }
@@ -1708,6 +1717,19 @@ kbd {
     top: auto !important;
     bottom: calc(8px + env(safe-area-inset-bottom)) !important;
     width: auto;
+    /* Above the details sheet. Docked at the bottom of the screen it lands in
+       exactly the same place the sheet does, and at the sheet's z-index the
+       band swallowed Cancel and Create — the two controls the prompt exists
+       for. Clearing it below is the tidy answer; outranking it is the one that
+       cannot be defeated by the sheet changing height. */
+    z-index: 60;
+  }
+
+  /* Sit above the band rather than under it, the same way the map tools do. The
+     band's own height already includes the safe-area inset, so this adds it
+     again to clear the whole thing. */
+  .app:has(.sidebar.sheet.band) .draw-prompt {
+    bottom: calc(48px + env(safe-area-inset-bottom)) !important;
   }
 
   .draw-prompt .dp-actions .btn { flex: 1; justify-content: center; }

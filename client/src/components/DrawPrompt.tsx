@@ -44,7 +44,8 @@ export function DrawPrompt({ rect, anchor, types, canHoldItems, onCreate, onCanc
   const tint = types.find((t) => String(t.id) === typeId)?.color || null;
 
   // Keep the popover on screen: drawn near the right or bottom edge it would
-  // otherwise hang off the viewport and be unreachable.
+  // otherwise hang off the viewport and be unreachable. On a phone none of this
+  // applies — the stylesheet docks the prompt across the bottom instead.
   const [place, setPlace] = useState<{ left: number; top: number }>({
     left: anchor.x,
     top: anchor.y + anchor.h + 6,

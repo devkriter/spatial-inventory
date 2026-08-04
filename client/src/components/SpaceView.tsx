@@ -33,7 +33,6 @@ import {
   IDENTITY,
   fitInto,
   ZOOM_STEP,
-  atRest,
   clampView,
   panBy,
   span,
@@ -296,8 +295,20 @@ export function SpaceView(props: SpaceViewProps) {
    * Whether the view is where *you* put it. Until you pan or zoom it belongs to
    * the app, which is free to re-fit it when the visible area changes; once you
    * have moved it deliberately, moving it back under you would be rude.
+   *
+   * Kept as both a ref and state: gestures read and write it several times
+   * within one event and need the synchronous value, while the "back to
+   * fitting the window" control has to appear and disappear with it. Asking
+   * the view instead does not work — the automatic fit that lifts the level
+   * clear of the details band is itself an offset, indistinguishable from a
+   * pan, so the control used to be on from the moment a phone loaded.
    */
   const userMoved = useRef(false);
+  const [moved, setMoved] = useState(false);
+  const markMoved = useCallback((next: boolean) => {
+    userMoved.current = next;
+    setMoved(next);
+  }, []);
 
   const baseRef = useRef(base);
   baseRef.current = base;
@@ -325,9 +336,29 @@ export function SpaceView(props: SpaceViewProps) {
   const visibleRef = useRef({ w: size_.w, h: size_.h });
   visibleRef.current = { w: size_.w, h: size_.h - inset_ };
 
-  const setView = useCallback((next: View) => {
-    setViewRaw(clampView(baseRef.current, next, visibleRef.current, extentRef.current));
-  }, []);
+  /** Where the app would put this level if you had never touched it. */
+  const homeView = useCallback(
+    () => fitInto(baseRef.current, visibleRef.current, extentRef.current),
+    []
+  );
+
+  const setView = useCallback(
+    (next: View) => {
+      const clamped = clampView(baseRef.current, next, visibleRef.current, extentRef.current);
+      setViewRaw(clamped);
+      // Whether you have *moved* it is a question about the result, not the
+      // gesture. A drag on a level that already fits is clamped straight back
+      // to centred: the finger moved and the map did not, and offering to undo
+      // that would be offering to undo nothing.
+      const home = homeView();
+      const settled =
+        Math.abs(clamped.k - home.k) < 0.005 &&
+        Math.abs(clamped.x - home.x) < 0.5 &&
+        Math.abs(clamped.y - home.y) < 0.5;
+      markMoved(!settled);
+    },
+    [homeView, markMoved]
+  );
 
   // Something covered or uncovered part of the map — the details sheet, most
   // often — so what was centred no longer is. Re-fit into what is left, which
@@ -337,15 +368,15 @@ export function SpaceView(props: SpaceViewProps) {
       setView(viewRef.current); // just re-clamp; keep where they put it
       return;
     }
-    setViewRaw(fitInto(baseRef.current, visibleRef.current, extentRef.current));
-  }, [inset_, setView]);
+    setViewRaw(homeView());
+  }, [inset_, setView, homeView]);
 
   // A new level is a new drawing; it opens at rest, filling the window. Keeping
   // the old pan would drop you into the corner of somewhere you have not seen.
   useEffect(() => {
     setViewRaw(IDENTITY);
-    userMoved.current = false;
-  }, [root.space.id, mode]);
+    markMoved(false);
+  }, [root.space.id, mode, markMoved]);
 
   const stage = stageFor(base, view);
   const interior = useMemo(
@@ -530,7 +561,6 @@ export function SpaceView(props: SpaceViewProps) {
     const p = screenPoint(e);
     // Trackpads send many small deltas and a mouse wheel a few large ones;
     // scaling by the magnitude keeps both feeling like the same speed.
-    userMoved.current = true;
     const steps = Math.sign(e.deltaY) * Math.min(1, Math.abs(e.deltaY) / 100);
     setView(zoomAt(baseRef.current, viewRef.current, viewRef.current.k * ZOOM_STEP ** -steps, p.x, p.y));
   };
@@ -751,7 +781,6 @@ export function SpaceView(props: SpaceViewProps) {
     if (travel > LONG_PRESS_SLOP) cancelLongPress();
 
     if (gesture.kind === 'pinch') {
-      userMoved.current = true;
       const [a, b] = [...pointers.current.values()];
       if (!a || !b) return;
       const s = span(a, b);
@@ -771,7 +800,6 @@ export function SpaceView(props: SpaceViewProps) {
     if (gesture.kind === 'pan') {
       if (!isDrag) return;
       dragged.current = true;
-      userMoved.current = true;
       const p = screenPoint(e);
       setView(panBy(gesture.view, p.x - gesture.from.x, p.y - gesture.from.y));
       return;
@@ -1099,7 +1127,10 @@ export function SpaceView(props: SpaceViewProps) {
     setDraft(null);
   };
 
-  const zoomed = !atRest(view);
+  // Only what *you* did counts. The automatic fit around the details band is
+  // an offset too, and reading the view alone put this control on screen at
+  // 100% before anybody had touched anything.
+  const zoomed = moved;
   const handleBox =
     handleTarget && interior
       ? unitsToScreen(draft ?? targetRect(handleTarget), interior.frame, root.space)
@@ -1215,7 +1246,12 @@ export function SpaceView(props: SpaceViewProps) {
           {zoomed && (
             <button
               className="map-tool readout"
-              onClick={() => { userMoved.current = false; setViewRaw(IDENTITY); }}
+              onClick={() => {
+                markMoved(false);
+                // The automatic fit, not IDENTITY: the window worth fitting is
+                // the part you can actually see, which excludes the band.
+                setViewRaw(homeView());
+              }}
               title="Back to fitting the window"
               aria-label="Fit the level to the window"
             >
