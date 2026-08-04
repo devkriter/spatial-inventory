@@ -773,8 +773,12 @@ export default function App() {
         searching={searching}
         selectedHoldingId={selectedHoldingId}
         selectedSpaceId={selectedId}
-        // Three levels of nesting on a 6-inch screen is a mosaic of specks.
-        maxDepth={phone ? Math.min(settings.drawDepth, 2) : settings.drawDepth}
+        // None at all on a phone. Drawing what is inside a block is worth it on
+        // a monitor, where a closet is big enough that its shelves read as
+        // shelves; at 90px across the same drawing is a scatter of grey slivers
+        // that says nothing and makes the block itself harder to read. Tap it
+        // and you are inside, which on a phone is the better answer anyway.
+        maxDepth={phone ? 0 : settings.drawDepth}
         showGrid={settings.showGrid}
         editing={editing}
         touch={touch}
@@ -951,6 +955,7 @@ export default function App() {
         <SettingsDialog
           settings={settings}
           onChange={changeSettings}
+          phone={phone}
           onReplayWalkthrough={() => {
             setSettingsOpen(false);
             setTourOpen(true);

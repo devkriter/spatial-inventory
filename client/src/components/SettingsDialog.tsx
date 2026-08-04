@@ -5,6 +5,8 @@ export interface SettingsDialogProps {
   onChange: (patch: Partial<Settings>) => void;
   onReplayWalkthrough: () => void;
   onClose: () => void;
+  /** Blocks are drawn solid on a phone, so the depth control has nothing to do. */
+  phone?: boolean;
 }
 
 interface Toggle {
@@ -41,7 +43,7 @@ const VIEW: Toggle[] = [
   { key: 'confirmDelete', label: 'Ask before deleting', hint: 'Deleting a space always takes its contents with it.' },
 ];
 
-export function SettingsDialog({ settings, onChange, onReplayWalkthrough, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ settings, onChange, onReplayWalkthrough, onClose, phone }: SettingsDialogProps) {
   const check = (t: Toggle) => (
     <label className="setting" key={t.key}>
       <input
@@ -106,21 +108,29 @@ export function SettingsDialog({ settings, onChange, onReplayWalkthrough, onClos
           <div className="panel-title" style={{ marginTop: 16 }}>The map</div>
           {VIEW.map(check)}
 
-          <div className="field" style={{ marginTop: 10 }}>
-            <label>Levels drawn at once — {settings.drawDepth}</label>
-            <input
-              type="range"
-              min={1}
-              max={4}
-              step={1}
-              value={settings.drawDepth}
-              onChange={(e) => onChange({ drawDepth: Number(e.target.value) })}
-            />
-            <p className="hint">
-              At 1 you see only what is directly inside the level you are in; at 4 you see drawers
-              within units within a closet.
+          {phone ? (
+            <p className="hint" style={{ marginTop: 10 }}>
+              Blocks are drawn solid here. On a phone the contents of a closet come out as a
+              scatter of slivers a few pixels across, which reads as noise and makes the closet
+              itself harder to pick out — tap one to go inside instead.
             </p>
-          </div>
+          ) : (
+            <div className="field" style={{ marginTop: 10 }}>
+              <label>Levels drawn at once — {settings.drawDepth}</label>
+              <input
+                type="range"
+                min={1}
+                max={4}
+                step={1}
+                value={settings.drawDepth}
+                onChange={(e) => onChange({ drawDepth: Number(e.target.value) })}
+              />
+              <p className="hint">
+                At 1 you see only what is directly inside the level you are in; at 4 you see drawers
+                within units within a closet.
+              </p>
+            </div>
+          )}
 
           <div className="panel-title" style={{ marginTop: 16 }}>Labels</div>
           <div className="grid-2">
