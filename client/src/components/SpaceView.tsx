@@ -62,9 +62,12 @@ const LABEL_MIN_H = 18;
 /** A block taller than this gets a title strip instead of a centred label. */
 const HEAD_MIN_H = 52;
 const HEAD_H = 21;
-/** A squeezed strip, for blocks that show contents but cannot spare a full one. */
+/**
+ * A squeezed strip, for blocks that show contents but cannot spare a full one.
+ * Needs no lower bound of its own: only a block showing contents ever gets one,
+ * and CONTENT_MIN already puts such a block well clear of 14px.
+ */
 const HEAD_H_TIGHT = 14;
-const HEAD_TIGHT_MIN_H = 30;
 const PAD = 3;
 const STAGE_PAD = 12;
 /**
@@ -1355,9 +1358,15 @@ function headStripOf(node: Node, rect: Rect, maxDepth: number, depth = 0): numbe
 }
 
 function headHeight(rect: Rect, showContents: boolean): number {
+  // Contents settle the question before width gets a say. A narrow block used to
+  // fall through the guard below, keep its contents, and render its name as a
+  // label across its whole face for the contents to paint over — the very thing
+  // the strip exists to prevent. A name clipped to fit a 50px strip is still a
+  // name; one with a tile sitting on it is a smear. Anything showing contents is
+  // taller than CONTENT_MIN, and so always clears the tight threshold.
+  if (showContents) return rect.h > HEAD_MIN_H ? HEAD_H : HEAD_H_TIGHT;
   if (rect.w <= 60) return 0; // no room for a readable name either way
-  if (rect.h > HEAD_MIN_H) return HEAD_H;
-  return showContents && rect.h > HEAD_TIGHT_MIN_H ? HEAD_H_TIGHT : 0;
+  return rect.h > HEAD_MIN_H ? HEAD_H : 0;
 }
 
 /* ---------------------------------------------------------------- emitters */
