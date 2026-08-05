@@ -10,6 +10,10 @@ I actually full of?" rather than "which drawer do I open?".
 
 [SpaceSniffer]: http://www.uderzo.it/main_products/space_sniffer/
 
+![The workshop level: a closet of shelves and boxes, a bench, a cabinet of forty-eight
+drawers, a filament rack. The tree on the left is the same thing as an outline; the panel
+on the right is the selected rack and the six spools in it.](docs/screenshot.png)
+
 ## Running it
 
 ```bash
